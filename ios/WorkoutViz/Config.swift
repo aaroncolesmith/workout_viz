@@ -4,7 +4,7 @@ enum Config {
     /// Your Railway deployment URL — update after first deploy.
     /// Example: "https://workout-viz-production.up.railway.app"
     static let backendURL = ProcessInfo.processInfo.environment["BACKEND_URL"]
-        ?? "https://YOUR-APP.up.railway.app"
+        ?? "https://workoutviz-production.up.railway.app"
 
     /// Must match HEALTHKIT_API_KEY env var set in Railway
     static let healthkitAPIKey = ProcessInfo.processInfo.environment["HEALTHKIT_API_KEY"]

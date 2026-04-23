@@ -31,7 +31,7 @@ git push
 |---|---|
 | `STRAVA_CLIENT_ID` | From strava.com/settings/api |
 | `STRAVA_CLIENT_SECRET` | From strava.com/settings/api |
-| `STRAVA_REDIRECT_URI` | `https://YOUR-APP.up.railway.app/auth/callback` |
+| `STRAVA_REDIRECT_URI` | `https://workoutviz-production.up.railway.app/auth/callback` |
 | `HEALTHKIT_API_KEY` | Any strong random string (e.g. `openssl rand -hex 32`) |
 
 ### 4. Add a persistent volume
@@ -62,7 +62,7 @@ Drag all files from `ios/WorkoutViz/` into the Xcode project:
 ### 3. Update Config.swift
 Edit the two constants:
 ```swift
-static let backendURL = "https://YOUR-APP.up.railway.app"
+static let backendURL = "https://workoutviz-production.up.railway.app"
 static let healthkitAPIKey = "the-key-you-set-in-railway"
 ```
 
