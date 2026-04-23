@@ -34,7 +34,6 @@ struct ContentView: View {
             WebView(url: appURL)
                 .ignoresSafeArea()
 
-            // Thin sync status banner
             if syncEngine.isSyncing {
                 HStack(spacing: 6) {
                     ProgressView().scaleEffect(0.7)
@@ -45,6 +44,23 @@ struct ContentView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 4)
                 .background(.thinMaterial, in: Capsule())
+                .padding(.top, 8)
+            } else {
+                // Floating backfill button — visible when idle
+                Button {
+                    Task { await syncEngine.performFullBackfill() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.caption2)
+                        Text("Backfill")
+                            .font(.caption2)
+                    }
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(.thinMaterial, in: Capsule())
+                }
                 .padding(.top, 8)
             }
         }

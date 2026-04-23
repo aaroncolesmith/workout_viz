@@ -29,7 +29,18 @@ final class SyncEngine: ObservableObject {
         await performSync()
     }
 
-    func performSync() async {
+    /// Full historical backfill — ignores lastSyncDate and goes back 10 years,
+    /// so every existing workout gets its streams / splits / polyline populated
+    /// on the backend. Safe to re-run: the backend is idempotent per source_id.
+    func performFullBackfill() async {
+        await performSync(force: true, since: tenYearsAgo())
+    }
+
+    private func tenYearsAgo() -> Date {
+        Calendar.current.date(byAdding: .year, value: -10, to: Date())!
+    }
+
+    func performSync(force: Bool = false, since overrideSince: Date? = nil) async {
         guard !isSyncing, hk.isAvailable else { return }
         isSyncing = true
         syncProgress = "Starting…"
@@ -39,7 +50,9 @@ final class SyncEngine: ObservableObject {
         }
 
         let since: Date
-        if let last = lastSyncDate {
+        if let o = overrideSince {
+            since = o
+        } else if let last = lastSyncDate, !force {
             since = last
         } else {
             since = Calendar.current.date(
