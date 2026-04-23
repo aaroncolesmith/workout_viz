@@ -438,6 +438,18 @@ a:hover {
   margin-bottom: var(--space-xl);
 }
 
+.dashboard-split-grid {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: var(--space-md);
+}
+
+.dashboard-charts-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-md);
+}
+
 .kinetica-stat-card {
   background: #1c1b1b;
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -646,6 +658,13 @@ a:hover {
   .stats-grid {
     grid-template-columns: repeat(2, 1fr);
   }
+  .stat-cards-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .dashboard-split-grid,
+  .dashboard-charts-grid {
+    grid-template-columns: 1fr;
+  }
   .activity-row {
     grid-template-columns: auto 1fr auto auto;
   }
@@ -654,6 +673,33 @@ a:hover {
   }
   .detail-charts-grid {
     grid-template-columns: 1fr;
+  }
+  .app-header {
+    padding: var(--space-sm) var(--space-md);
+    grid-template-columns: auto 1fr;
+    gap: var(--space-sm);
+  }
+  .app-nav {
+    overflow-x: auto;
+    justify-content: flex-start;
+    -webkit-overflow-scrolling: touch;
+  }
+  .app-nav a {
+    padding: var(--space-xs) var(--space-md);
+    font-size: 0.65rem;
+    white-space: nowrap;
+  }
+  .detail-stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .stat-cards-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .kinetica-stat-card {
+    padding: var(--space-md);
   }
 }
 

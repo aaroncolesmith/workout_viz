@@ -257,7 +257,7 @@ export default function Dashboard() {
 
       {/* ── Calendar Heatmap + Type Breakdown ── */}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 'var(--space-md)', marginBottom: 'var(--space-xl)' }}>
+      <div className="dashboard-split-grid" style={{ marginBottom: 'var(--space-xl)' }}>
         <ActivityCalendar />
         <TypeDistribution typeCounts={dynamicStats?.typeCounts || overview.activity_types || {}} />
       </div>
@@ -342,7 +342,7 @@ export default function Dashboard() {
       </div>
 
       {/* ── Charts Grid ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-md)', marginBottom: 'var(--space-xl)', minWidth: 0 }}>
+      <div className="dashboard-charts-grid" style={{ marginBottom: 'var(--space-xl)', minWidth: 0 }}>
 
         {/* Pace over time */}
         <div className="glass-card chart-container" style={{ minWidth: 0, minHeight: 300 }}>
