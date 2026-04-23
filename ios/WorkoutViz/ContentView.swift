@@ -11,6 +11,11 @@ struct WebView: UIViewRepresentable {
         let wv = WKWebView(frame: .zero, configuration: config)
         wv.allowsBackForwardNavigationGestures = true
         wv.scrollView.contentInsetAdjustmentBehavior = .automatic
+        // Prevent horizontal overscroll / rubber-banding — the web app is
+        // designed to fit the viewport; any horizontal scroll is a bug.
+        wv.scrollView.alwaysBounceHorizontal = false
+        wv.scrollView.bounces = true
+        wv.scrollView.showsHorizontalScrollIndicator = false
         return wv
     }
 
