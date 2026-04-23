@@ -1,0 +1,24 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Data (SQLite DB, CSVs, Strava token — all contain sensitive data or are ephemeral)
+data/
+*.db
+
+# SQLite WAL files
+*.db-shm
+*.db-wal
+
+# Logs
+*.log
+
+# OS
+.DS_Store
