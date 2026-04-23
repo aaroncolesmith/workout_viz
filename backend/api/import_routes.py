@@ -38,6 +38,29 @@ def apple_health_status():
     return get_import_status()
 
 
+@router.get("/healthkit/missing-streams")
+def healthkit_missing_streams(x_api_key: Optional[str] = Header(default=None)):
+    """Diagnostic: which Apple Health GPS activities still lack a polyline."""
+    _require_healthkit_key(x_api_key)
+    conn = get_conn()
+    GPS_TYPES = ('Run', 'Ride', 'Walk', 'Hike', 'Swim', 'VirtualRun', 'TrailRun', 'VirtualRide')
+    rows = conn.execute(
+        f"""
+        SELECT id, type, start_date, date, distance_miles
+          FROM activities
+         WHERE source = 'apple_health'
+           AND map_polyline IS NULL
+           AND type IN ({','.join(['?']*len(GPS_TYPES))})
+         ORDER BY start_date DESC
+        """,
+        GPS_TYPES
+    ).fetchall()
+    return {
+        "count": len(rows),
+        "activities": [dict(r) for r in rows],
+    }
+
+
 # ── HealthKit native sync (iOS companion app) ──────────────────────────────────
 
 class HKLocationSample(BaseModel):

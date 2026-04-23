@@ -154,15 +154,26 @@ final class SyncEngine: ObservableObject {
                 if workout.workoutActivityType.isGPS {
                     let locations = (try? await hk.fetchRoute(for: workout)) ?? []
                     let hrSeries = (try? await hk.fetchHeartRateSeries(for: workout)) ?? []
-                    if !locations.isEmpty {
+                    let gotStreams = !locations.isEmpty
+                    if gotStreams {
                         req.streams = Self.buildStreams(
                             workoutStart: workout.startDate,
                             locations: locations,
                             hrSeries: hrSeries
                         )
+                    } else {
+                        print("[SyncEngine] empty route for GPS workout \(sourceId) " +
+                              "type=\(workout.workoutActivityType.backendType) " +
+                              "start=\(workout.startDate) — will retry next backfill")
                     }
                     try await postBatch([req])
-                    syncedSourceIds.insert(sourceId)
+
+                    // Only mark GPS workouts as synced when we actually attached
+                    // streams. Empty-route cases (indoor, auth missing, transient)
+                    // stay out of the synced set so the next Backfill tap retries.
+                    if gotStreams {
+                        syncedSourceIds.insert(sourceId)
+                    }
                     onProgress(1)
                 } else {
                     nonGPSBatch.append((req, sourceId))
