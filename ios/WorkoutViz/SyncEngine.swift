@@ -154,23 +154,30 @@ final class SyncEngine: ObservableObject {
                 if workout.workoutActivityType.isGPS {
                     let locations = (try? await hk.fetchRoute(for: workout)) ?? []
                     let hrSeries = (try? await hk.fetchHeartRateSeries(for: workout)) ?? []
-                    let gotStreams = !locations.isEmpty
+
+                    // Outdoor path: GPS route gives us cumulative distance via
+                    //   Haversine on the backend.
+                    // Indoor path (treadmill, stationary bike): no route, but the
+                    //   Watch still records distance samples we can bucket.
+                    let distanceSeries = locations.isEmpty
+                        ? ((try? await hk.fetchDistanceSeries(for: workout)) ?? [])
+                        : []
+
+                    let gotStreams = !locations.isEmpty || !distanceSeries.isEmpty
                     if gotStreams {
                         req.streams = Self.buildStreams(
                             workoutStart: workout.startDate,
                             locations: locations,
+                            distanceSeries: distanceSeries,
                             hrSeries: hrSeries
                         )
                     } else {
-                        print("[SyncEngine] empty route for GPS workout \(sourceId) " +
-                              "type=\(workout.workoutActivityType.backendType) " +
+                        print("[SyncEngine] no route and no distance samples for GPS workout " +
+                              "\(sourceId) type=\(workout.workoutActivityType.backendType) " +
                               "start=\(workout.startDate) — will retry next backfill")
                     }
                     try await postBatch([req])
 
-                    // Only mark GPS workouts as synced when we actually attached
-                    // streams. Empty-route cases (indoor, auth missing, transient)
-                    // stay out of the synced set so the next Backfill tap retries.
                     if gotStreams {
                         syncedSourceIds.insert(sourceId)
                     }
@@ -227,6 +234,7 @@ final class SyncEngine: ObservableObject {
     private static func buildStreams(
         workoutStart: Date,
         locations: [CLLocation],
+        distanceSeries: [(Date, Double)],
         hrSeries: [(Date, Double)]
     ) -> HKStreams {
         let locs = locations.map { loc -> HKLocationSample in
@@ -237,10 +245,13 @@ final class SyncEngine: ObservableObject {
                 alt: loc.altitude
             )
         }
+        let dists = distanceSeries.map { (date, meters) -> HKDistanceSample in
+            HKDistanceSample(t: date.timeIntervalSince(workoutStart), m: meters)
+        }
         let hrs = hrSeries.map { (date, bpm) -> HKHeartRateSample in
             HKHeartRateSample(t: date.timeIntervalSince(workoutStart), bpm: bpm)
         }
-        return HKStreams(locations: locs, heartrate: hrs)
+        return HKStreams(locations: locs, distance: dists, heartrate: hrs)
     }
 }
 
@@ -258,8 +269,14 @@ private struct HKHeartRateSample: Codable {
     let bpm: Double
 }
 
+private struct HKDistanceSample: Codable {
+    let t: Double
+    let m: Double    // cumulative meters since workout start
+}
+
 private struct HKStreams: Codable {
     let locations: [HKLocationSample]
+    let distance: [HKDistanceSample]
     let heartrate: [HKHeartRateSample]
 }
 

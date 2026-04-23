@@ -78,15 +78,13 @@ def compute_splits(
             continue
 
         times = [bundle.time[i] for i in idxs]
-        bucket_start = min(times)
-        bucket_end   = max(times)
+        bucket_end = max(times)
 
-        # Time spent in this bucket = delta since previous bucket's end.
-        # Falls back to within-bucket span for bucket 1.
-        if prev_bucket_max_time is not None:
-            time_secs = bucket_end - prev_bucket_max_time
-        else:
-            time_secs = bucket_end - bucket_start
+        # Time spent in this bucket = end-of-this - end-of-prev. For bucket 1
+        # the prior anchor is the workout start (t=0) — which also correctly
+        # handles low-density streams where the first bucket has a single sample.
+        anchor = prev_bucket_max_time if prev_bucket_max_time is not None else 0.0
+        time_secs = bucket_end - anchor
         prev_bucket_max_time = bucket_end
 
         def _mean(arr: Optional[List[float]]) -> Optional[float]:
@@ -161,6 +159,37 @@ def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     dl = math.radians(lng2 - lng1)
     a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
     return 2 * R * math.asin(math.sqrt(a))
+
+
+def from_distance_stream(
+    distance_samples: List[Dict[str, float]],
+    heartrate: Optional[List[Dict[str, float]]] = None,
+) -> StreamBundle:
+    """
+    Indoor-workout adapter: build a StreamBundle from (t, cumulative meters)
+    samples (e.g. treadmill `distanceWalkingRunning` from Apple Watch).
+    No GPS, no altitude — just time + distance + optional HR.
+    """
+    if not distance_samples:
+        return StreamBundle(time=[], distance=[])
+
+    samples = sorted(distance_samples, key=lambda s: s['t'])
+    time_arr = [float(s['t']) for s in samples]
+    dist_arr = [float(s['m']) for s in samples]
+
+    hr_arr: Optional[List[float]] = None
+    if heartrate:
+        hr_sorted = sorted(heartrate, key=lambda s: s['t'])
+        hr_times  = [s['t'] for s in hr_sorted]
+        hr_vals   = [s['bpm'] for s in hr_sorted]
+        hr_arr = []
+        j = 0
+        for t in time_arr:
+            while j + 1 < len(hr_times) and abs(hr_times[j + 1] - t) < abs(hr_times[j] - t):
+                j += 1
+            hr_arr.append(hr_vals[j])
+
+    return StreamBundle(time=time_arr, distance=dist_arr, heartrate=hr_arr)
 
 
 def from_healthkit_streams(

@@ -40,20 +40,27 @@ def apple_health_status():
 
 @router.get("/healthkit/missing-streams")
 def healthkit_missing_streams(x_api_key: Optional[str] = Header(default=None)):
-    """Diagnostic: which Apple Health GPS activities still lack a polyline."""
+    """
+    Diagnostic: which Apple Health distance activities have no splits computed
+    yet. For outdoor activities this means no GPS route was ever fetched; for
+    indoor activities it means no distance samples were fetched either.
+    """
     _require_healthkit_key(x_api_key)
     conn = get_conn()
-    GPS_TYPES = ('Run', 'Ride', 'Walk', 'Hike', 'Swim', 'VirtualRun', 'TrailRun', 'VirtualRide')
+    DIST_TYPES = ('Run', 'Ride', 'Walk', 'Hike', 'Swim', 'VirtualRun', 'TrailRun', 'VirtualRide')
     rows = conn.execute(
         f"""
-        SELECT id, type, start_date, date, distance_miles
-          FROM activities
-         WHERE source = 'apple_health'
-           AND map_polyline IS NULL
-           AND type IN ({','.join(['?']*len(GPS_TYPES))})
-         ORDER BY start_date DESC
+        SELECT a.id, a.type, a.start_date, a.date, a.distance_miles,
+               a.map_polyline IS NOT NULL AS has_polyline
+          FROM activities a
+          LEFT JOIN splits s ON s.activity_id = a.id
+         WHERE a.source = 'apple_health'
+           AND a.type IN ({','.join(['?']*len(DIST_TYPES))})
+         GROUP BY a.id
+        HAVING COUNT(s.id) = 0
+         ORDER BY a.start_date DESC
         """,
-        GPS_TYPES
+        DIST_TYPES
     ).fetchall()
     return {
         "count": len(rows),
@@ -76,8 +83,15 @@ class HKHeartRateSample(BaseModel):
     bpm: float
 
 
+class HKDistanceSample(BaseModel):
+    """Indoor distance sample from distanceWalkingRunning/distanceCycling."""
+    t: float
+    m: float   # cumulative meters since workout start
+
+
 class HKStreams(BaseModel):
     locations: List[HKLocationSample] = []
+    distance:  List[HKDistanceSample] = []
     heartrate: List[HKHeartRateSample] = []
 
 
@@ -127,7 +141,9 @@ def healthkit_sync(body: HKSyncRequest, x_api_key: Optional[str] = Header(defaul
     import polyline as _polyline
     from datetime import datetime
     from backend.services.data_service import get_data_service
-    from backend.services.splits_service import from_healthkit_streams, compute_splits
+    from backend.services.splits_service import (
+        from_healthkit_streams, from_distance_stream, compute_splits,
+    )
 
     def _encode_polyline(locations: list, max_points: int = 1500) -> str:
         """Encode (lat, lng) points as a Google polyline, evenly downsampled."""
@@ -231,17 +247,28 @@ def healthkit_sync(body: HKSyncRequest, x_api_key: Optional[str] = Header(defaul
                 0,
             ))
             added += 1
-        elif w.streams is None or not w.streams.locations:
-            # No new data to add and no streams to backfill.
-            skipped += 1
-            continue
+        else:
+            # Existing row. Only worth continuing if we have streams to apply.
+            has_locations = bool(w.streams and w.streams.locations)
+            has_distance  = bool(w.streams and w.streams.distance)
+            if not has_locations and not has_distance:
+                skipped += 1
+                continue
 
-        # ── Streams: compute splits + fastest segments + polyline ─────────
+        # ── Streams: compute splits + fastest segments (and polyline if GPS) ─
+        bundle = None
+        locs = []
         if w.streams and w.streams.locations:
             locs = [loc.model_dump() for loc in w.streams.locations]
             hrs  = [hr.model_dump()  for hr in w.streams.heartrate] if w.streams.heartrate else None
             bundle = from_healthkit_streams(locs, hrs)
+        elif w.streams and w.streams.distance:
+            # Indoor path: treadmill / stationary bike — no GPS but distance samples.
+            dists = [d.model_dump() for d in w.streams.distance]
+            hrs   = [hr.model_dump() for hr in w.streams.heartrate] if w.streams.heartrate else None
+            bundle = from_distance_stream(dists, hrs)
 
+        if bundle is not None and bundle.distance:
             splits = compute_splits(
                 bundle,
                 activity_id=activity_id,
@@ -254,36 +281,43 @@ def healthkit_sync(body: HKSyncRequest, x_api_key: Optional[str] = Header(defaul
                 svc.compute_and_save_summaries(activity_id)
                 splits_built += 1
 
-            # Backfill derived geo fields on the activity row.
-            polyline_str = _encode_polyline(locs)
-            start = locs[0]
-            end = locs[-1]
-            total_elev_m = sum(float(s.get('elevation_gain_meters') or 0) for s in splits)
-            conn.execute(
-                """
-                UPDATE activities
-                   SET map_polyline = ?,
-                       start_latlng = ?,
-                       end_latlng   = ?,
-                       start_lat    = ?,
-                       start_lng    = ?,
-                       end_lat      = ?,
-                       end_lng      = ?,
-                       total_elevation_gain = CASE
-                           WHEN ? > 0 THEN ? ELSE total_elevation_gain
-                       END
-                 WHERE id = ?
-                """,
-                (
-                    polyline_str or None,
-                    f"[{start['lat']},{start['lng']}]",
-                    f"[{end['lat']},{end['lng']}]",
-                    start['lat'], start['lng'],
-                    end['lat'],   end['lng'],
-                    total_elev_m, round(total_elev_m, 2),
-                    activity_id,
+            # GPS-only: polyline + lat/lng.
+            if locs:
+                polyline_str = _encode_polyline(locs)
+                start = locs[0]
+                end = locs[-1]
+                total_elev_m = sum(float(s.get('elevation_gain_meters') or 0) for s in splits)
+                conn.execute(
+                    """
+                    UPDATE activities
+                       SET map_polyline = ?,
+                           start_latlng = ?,
+                           end_latlng   = ?,
+                           start_lat    = ?,
+                           start_lng    = ?,
+                           end_lat      = ?,
+                           end_lng      = ?,
+                           total_elevation_gain = CASE
+                               WHEN ? > 0 THEN ? ELSE total_elevation_gain
+                           END
+                     WHERE id = ?
+                    """,
+                    (
+                        polyline_str or None,
+                        f"[{start['lat']},{start['lng']}]",
+                        f"[{end['lat']},{end['lng']}]",
+                        start['lat'], start['lng'],
+                        end['lat'],   end['lng'],
+                        total_elev_m, round(total_elev_m, 2),
+                        activity_id,
+                    )
                 )
-            )
+            else:
+                # Indoor: mark trainer flag so the detail page knows there's no map.
+                conn.execute(
+                    "UPDATE activities SET trainer = 1 WHERE id = ?",
+                    (activity_id,)
+                )
 
     conn.commit()
 

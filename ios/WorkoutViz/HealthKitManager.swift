@@ -68,6 +68,45 @@ final class HealthKitManager {
         return (bpms.reduce(0, +) / Double(bpms.count), bpms.max())
     }
 
+    /// Fetch per-sample cumulative distance for a workout. Works for treadmill
+    /// runs, indoor rides, and outdoor activities that happen to record distance
+    /// samples even without GPS routes. Returned pairs are (timestamp, cumulative
+    /// meters from workout start).
+    func fetchDistanceSeries(for workout: HKWorkout) async throws -> [(Date, Double)] {
+        let typeId: HKQuantityTypeIdentifier
+        switch workout.workoutActivityType {
+        case .cycling:            typeId = .distanceCycling
+        case .swimming:           typeId = .distanceSwimming
+        default:                  typeId = .distanceWalkingRunning
+        }
+        guard let qtype = HKQuantityType.quantityType(forIdentifier: typeId) else {
+            return []
+        }
+        let predicate = HKQuery.predicateForSamples(
+            withStart: workout.startDate, end: workout.endDate, options: .strictStartDate)
+        let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+
+        let samples: [HKQuantitySample] = try await withCheckedThrowingContinuation { cont in
+            let query = HKSampleQuery(
+                sampleType: qtype, predicate: predicate,
+                limit: HKObjectQueryNoLimit, sortDescriptors: [sort]
+            ) { _, s, err in
+                if let err { cont.resume(throwing: err); return }
+                cont.resume(returning: (s as? [HKQuantitySample]) ?? [])
+            }
+            store.execute(query)
+        }
+        // Each sample carries a delta-distance. Accumulate to cumulative meters,
+        // using the sample's endDate as the timestamp anchor.
+        var cumulative = 0.0
+        var out: [(Date, Double)] = []
+        for s in samples {
+            cumulative += s.quantity.doubleValue(for: .meter())
+            out.append((s.endDate, cumulative))
+        }
+        return out
+    }
+
     /// Fetch the full per-sample HR series for a workout. Each tuple is (timestamp, bpm).
     func fetchHeartRateSeries(for workout: HKWorkout) async throws -> [(Date, Double)] {
         let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate)!
