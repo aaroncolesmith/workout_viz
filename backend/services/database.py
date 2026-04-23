@@ -292,3 +292,52 @@ def _migrate_schema(conn: sqlite3.Connection):
             conn.commit()
         except sqlite3.OperationalError:
             pass  # column already exists — safe to ignore
+
+    _migrate_apple_health_ids(conn)
+
+
+# JS Number.MAX_SAFE_INTEGER = 2^53 - 1 = 9,007,199,254,740,991
+_JS_SAFE_INT = (1 << 53) - 1
+
+
+def _migrate_apple_health_ids(conn: sqlite3.Connection):
+    """
+    Older _ah_id / _hk_id used 7-8 bytes, producing IDs that exceed JS's
+    MAX_SAFE_INTEGER (2^53). When the frontend parses them via JSON they
+    silently round to the nearest representable float, so subsequent API
+    lookups miss the row. This migration regenerates any out-of-range
+    Apple Health / HealthKit IDs using the new 6-byte algorithm.
+    """
+    import hashlib
+
+    rows = conn.execute(
+        "SELECT id, type, start_date FROM activities "
+        "WHERE source = 'apple_health' AND ABS(id) > ?",
+        (_JS_SAFE_INT,)
+    ).fetchall()
+
+    if not rows:
+        return
+
+    logger.info(f"Migrating {len(rows)} Apple Health IDs to fit in JS safe integer range")
+    migrated = 0
+    for row in rows:
+        old_id = row["id"]
+        atype = row["type"] or ""
+        start_date = row["start_date"] or ""
+        digest = hashlib.sha256(f"{atype}:{start_date}".encode()).digest()
+        val = int.from_bytes(digest[:6], "big")
+        new_id = -(val or 1)
+        if new_id == old_id:
+            continue
+        try:
+            conn.execute("UPDATE activities SET id = ? WHERE id = ?", (new_id, old_id))
+            # Cascade the new ID into child tables that reference activity_id
+            for tbl in ("splits", "summaries", "pr_events", "route_activities"):
+                conn.execute(f"UPDATE {tbl} SET activity_id = ? WHERE activity_id = ?",
+                             (new_id, old_id))
+            migrated += 1
+        except sqlite3.IntegrityError as e:
+            logger.warning(f"ID collision for {old_id} → {new_id}: {e}")
+    conn.commit()
+    logger.info(f"Migrated {migrated} Apple Health activity IDs")

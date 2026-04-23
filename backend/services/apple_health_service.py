@@ -111,9 +111,11 @@ def _set(**kw):
 
 
 def _ah_id(activity_type: str, start_date_iso: str) -> int:
-    """Stable negative integer ID — never collides with Strava's positive IDs."""
+    """Stable negative integer ID — never collides with Strava's positive IDs.
+    Uses 6 bytes (48 bits) so the value fits within JS Number.MAX_SAFE_INTEGER (2^53).
+    """
     digest = hashlib.sha256(f"{activity_type}:{start_date_iso}".encode()).digest()
-    val = int.from_bytes(digest[:7], 'big')
+    val = int.from_bytes(digest[:6], 'big')
     return -(val or 1)
 
 

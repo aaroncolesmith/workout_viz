@@ -84,9 +84,10 @@ def healthkit_sync(body: HKSyncRequest, x_api_key: Optional[str] = Header(defaul
     from backend.services.data_service import get_data_service
 
     def _hk_id(source_id: str) -> int:
+        # 6 bytes (48 bits) — fits within JS Number.MAX_SAFE_INTEGER
         digest = hashlib.sha256(f"hk:{source_id}".encode()).digest()
-        n = int.from_bytes(digest[:8], "big")
-        return -(n >> 1)  # negative, never collides with Strava positive IDs
+        n = int.from_bytes(digest[:6], "big")
+        return -(n or 1)
 
     STRENGTH_TYPES = {
         'WeightTraining', 'Workout', 'FunctionalStrengthTraining', 'CoreTraining',
