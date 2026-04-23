@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import HealthKit
 
 /// Coordinates HealthKit reads → backend POST.  Singleton, observable.
