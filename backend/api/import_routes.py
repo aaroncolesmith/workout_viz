@@ -138,7 +138,6 @@ def healthkit_sync(body: HKSyncRequest, x_api_key: Optional[str] = Header(defaul
             skipped += 1
             continue
 
-        activity_id = _hk_id(w.source_id)
         duration_min = w.duration_sec / 60.0
 
         distance_m = w.distance_meters or 0.0
@@ -156,9 +155,29 @@ def healthkit_sync(body: HKSyncRequest, x_api_key: Optional[str] = Header(defaul
             continue
 
         activity_name = f"{w.type} – {date_str}"
-        existing = conn.execute(
-            "SELECT id FROM activities WHERE id = ?", (activity_id,)
+
+        # Dedup: the XML import and HK sync generate different IDs for the
+        # same workout. Before inserting, look for an existing apple_health
+        # row with the same start time + type and reuse its ID so we don't
+        # create parallel duplicates.
+        start_ts = start_dt.timestamp()
+        match = conn.execute(
+            """SELECT id FROM activities
+                WHERE source = 'apple_health'
+                  AND type = ?
+                  AND ABS(strftime('%s', start_date) - ?) < 60
+                LIMIT 1""",
+            (w.type, start_ts)
         ).fetchone()
+
+        if match:
+            activity_id = match["id"]
+            existing = match
+        else:
+            activity_id = _hk_id(w.source_id)
+            existing = conn.execute(
+                "SELECT id FROM activities WHERE id = ?", (activity_id,)
+            ).fetchone()
 
         if not existing:
             conn.execute("""

@@ -89,6 +89,14 @@ final class HealthKitManager {
         return samples.map { ($0.startDate, $0.quantity.doubleValue(for: bpmUnit)) }
     }
 
+    /// True when the user has granted permission to read workout routes.
+    /// Apple's HKHealthStore only returns notDetermined/sharingAuthorized/sharingDenied
+    /// for *write* auth — for read we infer from whether any route samples are
+    /// ever returned. See `fetchRoute` for empty-route handling.
+    var routeAuthStatus: HKAuthorizationStatus {
+        store.authorizationStatus(for: HKSeriesType.workoutRoute())
+    }
+
     /// Fetch the full GPS route for a workout as a sorted list of CLLocations.
     /// Returns [] when the workout has no route samples (strength, indoor, etc).
     func fetchRoute(for workout: HKWorkout) async throws -> [CLLocation] {

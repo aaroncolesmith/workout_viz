@@ -50,6 +50,11 @@ final class SyncEngine: ObservableObject {
     /// Full historical backfill — ignores lastSyncDate and goes back 10 years.
     /// Resumable: already-uploaded workouts are skipped based on persisted UUIDs.
     func performFullBackfill() async {
+        // Re-request auth in case workoutRoute wasn't granted earlier — iOS
+        // will silently no-op if the user already approved everything.
+        try? await hk.requestAuthorization()
+        print("[SyncEngine] route auth status = \(hk.routeAuthStatus.rawValue) " +
+              "(0=notDetermined, 1=denied, 2=authorized — read auth may always show 0)")
         await performSync(force: true, since: tenYearsAgo())
     }
 

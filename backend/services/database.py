@@ -294,6 +294,7 @@ def _migrate_schema(conn: sqlite3.Connection):
             pass  # column already exists — safe to ignore
 
     _migrate_apple_health_ids(conn)
+    _dedupe_apple_health_activities(conn)
 
 
 # JS Number.MAX_SAFE_INTEGER = 2^53 - 1 = 9,007,199,254,740,991
@@ -341,3 +342,59 @@ def _migrate_apple_health_ids(conn: sqlite3.Connection):
             logger.warning(f"ID collision for {old_id} → {new_id}: {e}")
     conn.commit()
     logger.info(f"Migrated {migrated} Apple Health activity IDs")
+
+
+def _dedupe_apple_health_activities(conn: sqlite3.Connection):
+    """
+    Merge duplicate Apple Health activities that share the same start_time
+    and type. Caused by two earlier code paths:
+      - XML import used `hash(type + start_date_iso)` for IDs
+      - HealthKit sync used `hash('hk:' + workout UUID)` for IDs
+    Same workout, different IDs → two rows each.
+
+    Rule: group by (type, start_date bucket = minute). For each group,
+    keep the row with map_polyline populated (streams already processed);
+    ties broken by latest start_date. Delete the rest — cascade drops
+    their child splits/summaries/pr_events.
+    """
+    groups = conn.execute(
+        """
+        SELECT type, strftime('%Y-%m-%d %H:%M', start_date) AS bucket,
+               GROUP_CONCAT(id, ',') AS ids,
+               COUNT(*) AS n
+          FROM activities
+         WHERE source = 'apple_health'
+           AND start_date IS NOT NULL
+         GROUP BY type, bucket
+        HAVING COUNT(*) > 1
+        """
+    ).fetchall()
+
+    if not groups:
+        return
+
+    total_dropped = 0
+    for g in groups:
+        ids = [int(x) for x in g["ids"].split(",") if x]
+        rows = conn.execute(
+            f"SELECT id, map_polyline, start_date FROM activities WHERE id IN ({','.join(['?']*len(ids))})",
+            ids
+        ).fetchall()
+
+        def sort_key(r):
+            has_poly = 1 if r["map_polyline"] else 0
+            return (has_poly, r["start_date"] or "")
+
+        rows_sorted = sorted(rows, key=sort_key, reverse=True)
+        winner = rows_sorted[0]["id"]
+        losers = [r["id"] for r in rows_sorted[1:]]
+
+        for loser in losers:
+            for tbl in ("splits", "summaries", "pr_events", "route_activities"):
+                conn.execute(f"DELETE FROM {tbl} WHERE activity_id = ?", (loser,))
+            conn.execute("DELETE FROM activities WHERE id = ?", (loser,))
+            total_dropped += 1
+
+    conn.commit()
+    if total_dropped:
+        logger.info(f"Deduped {total_dropped} duplicate Apple Health activities across {len(groups)} groups")
