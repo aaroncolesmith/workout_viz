@@ -4,6 +4,11 @@ import HealthKit
 import CoreLocation
 
 /// Coordinates HealthKit reads → backend POST.  Singleton, observable.
+///
+/// Resumable backfill: each workout we successfully upload gets its UUID
+/// recorded in UserDefaults. Tapping "Backfill" again after an interruption
+/// skips already-uploaded workouts and continues from the next one, so
+/// progress accumulates across runs.
 @MainActor
 final class SyncEngine: ObservableObject {
     static let shared = SyncEngine()
@@ -15,6 +20,19 @@ final class SyncEngine: ObservableObject {
     }()
 
     private let hk = HealthKitManager.shared
+
+    // Persistent set of source_ids (HKWorkout UUIDs) we've successfully uploaded.
+    private let syncedKey = "syncedSourceIds"
+    private var syncedSourceIds: Set<String> = {
+        let arr = UserDefaults.standard.stringArray(forKey: "syncedSourceIds") ?? []
+        return Set(arr)
+    }()
+
+    /// Backfill chunk size — how many workouts to process before committing
+    /// progress to UserDefaults. Smaller = more frequent commits, more resilience
+    /// to interruptions. GPS workouts are expensive (route + HR fetch per),
+    /// so 25 is a good tradeoff between progress and UI responsiveness.
+    private let chunkSize = 25
 
     // MARK: - Public
 
@@ -29,11 +47,16 @@ final class SyncEngine: ObservableObject {
         await performSync()
     }
 
-    /// Full historical backfill — ignores lastSyncDate and goes back 10 years,
-    /// so every existing workout gets its streams / splits / polyline populated
-    /// on the backend. Safe to re-run: the backend is idempotent per source_id.
+    /// Full historical backfill — ignores lastSyncDate and goes back 10 years.
+    /// Resumable: already-uploaded workouts are skipped based on persisted UUIDs.
     func performFullBackfill() async {
         await performSync(force: true, since: tenYearsAgo())
+    }
+
+    /// Reset backfill progress so next backfill re-uploads everything.
+    func resetBackfillProgress() {
+        syncedSourceIds.removeAll()
+        UserDefaults.standard.removeObject(forKey: syncedKey)
     }
 
     private func tenYearsAgo() -> Date {
@@ -60,31 +83,72 @@ final class SyncEngine: ObservableObject {
             )!
         }
 
+        let workouts: [HKWorkout]
         do {
-            let workouts = try await hk.fetchWorkouts(since: since)
-            guard !workouts.isEmpty else {
-                recordSync()
-                return
+            workouts = try await hk.fetchWorkouts(since: since)
+        } catch {
+            print("[SyncEngine] fetchWorkouts failed: \(error)")
+            return
+        }
+        guard !workouts.isEmpty else {
+            recordSync()
+            return
+        }
+
+        // Skip anything we've already uploaded — enables resumable backfill.
+        let pending = workouts.filter { !syncedSourceIds.contains($0.uuid.uuidString) }
+        let total = pending.count
+        let alreadyDone = workouts.count - total
+
+        if total == 0 {
+            syncProgress = "Nothing new"
+            recordSync()
+            return
+        }
+
+        // Process in chunks. Progress commits after every chunk, so
+        // an interruption still leaves the completed chunks persisted.
+        var done = 0
+        for chunkStart in stride(from: 0, to: pending.count, by: chunkSize) {
+            let end = min(chunkStart + chunkSize, pending.count)
+            let chunk = Array(pending[chunkStart..<end])
+
+            await processChunk(chunk) { completed in
+                done += completed
+                let remaining = total - done
+                let skippedLabel = alreadyDone > 0 ? " (\(alreadyDone) already done)" : ""
+                self.syncProgress = "Syncing \(done)/\(total)\(skippedLabel) — \(remaining) left"
             }
 
-            // Partition: GPS workouts get streams (posted one at a time);
-            //            non-GPS workouts are batched without streams.
-            var nonGPSBatch: [HKWorkoutRequest] = []
-            var done = 0
-            let total = workouts.count
+            // Persist after each chunk so a crash / background / network loss
+            // doesn't throw away the work we just did.
+            commitSyncedIds()
+        }
 
-            for workout in workouts {
-                done += 1
-                syncProgress = "Syncing \(done)/\(total)…"
+        recordSync()
+    }
 
+    // MARK: - Private
+
+    /// Process up to `chunkSize` workouts. Records each successfully-uploaded
+    /// workout's UUID in the in-memory set; caller persists to UserDefaults.
+    /// Per-workout errors are caught so one bad workout doesn't abort the chunk.
+    private func processChunk(
+        _ workouts: [HKWorkout],
+        onProgress: (Int) -> Void
+    ) async {
+        var nonGPSBatch: [(HKWorkoutRequest, String)] = []  // (request, source_id)
+
+        for workout in workouts {
+            let sourceId = workout.uuid.uuidString
+
+            do {
                 let (avgHR, maxHR) = try await hk.fetchHeartRate(for: workout)
                 var req = HKWorkoutRequest.from(workout: workout, avgHR: avgHR, maxHR: maxHR)
 
                 if workout.workoutActivityType.isGPS {
-                    // GPS: fetch route + HR series, attach as streams, POST alone.
                     let locations = (try? await hk.fetchRoute(for: workout)) ?? []
                     let hrSeries = (try? await hk.fetchHeartRateSeries(for: workout)) ?? []
-
                     if !locations.isEmpty {
                         req.streams = Self.buildStreams(
                             workoutStart: workout.startDate,
@@ -93,26 +157,34 @@ final class SyncEngine: ObservableObject {
                         )
                     }
                     try await postBatch([req])
+                    syncedSourceIds.insert(sourceId)
+                    onProgress(1)
                 } else {
-                    nonGPSBatch.append(req)
-                    if nonGPSBatch.count >= Config.syncBatchSize {
-                        try await postBatch(nonGPSBatch)
-                        nonGPSBatch.removeAll()
-                    }
+                    nonGPSBatch.append((req, sourceId))
                 }
+            } catch {
+                // Record but continue with the next workout.
+                print("[SyncEngine] upload failed for workout \(sourceId): \(error)")
             }
+        }
 
-            if !nonGPSBatch.isEmpty {
-                try await postBatch(nonGPSBatch)
+        // Flush accumulated non-GPS workouts for this chunk.
+        if !nonGPSBatch.isEmpty {
+            do {
+                try await postBatch(nonGPSBatch.map { $0.0 })
+                for (_, sid) in nonGPSBatch {
+                    syncedSourceIds.insert(sid)
+                }
+                onProgress(nonGPSBatch.count)
+            } catch {
+                print("[SyncEngine] non-GPS batch POST failed: \(error)")
             }
-
-            recordSync()
-        } catch {
-            print("[SyncEngine] sync failed: \(error)")
         }
     }
 
-    // MARK: - Private
+    private func commitSyncedIds() {
+        UserDefaults.standard.set(Array(syncedSourceIds), forKey: syncedKey)
+    }
 
     private func recordSync() {
         let now = Date()
@@ -128,7 +200,7 @@ final class SyncEngine: ObservableObject {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue(Config.healthkitAPIKey, forHTTPHeaderField: "X-Api-Key")
         req.httpBody = try JSONEncoder().encode(HKSyncBody(workouts: payloads))
-        req.timeoutInterval = 120  // streams can take a moment to process
+        req.timeoutInterval = 120
 
         let (_, response) = try await URLSession.shared.data(for: req)
         if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
@@ -136,13 +208,11 @@ final class SyncEngine: ObservableObject {
         }
     }
 
-    /// Build the streams payload: relative timestamps + downsampled series.
     private static func buildStreams(
         workoutStart: Date,
         locations: [CLLocation],
         hrSeries: [(Date, Double)]
     ) -> HKStreams {
-        // GPS is typically already ~1 Hz; no downsample needed for sub-3-hour workouts.
         let locs = locations.map { loc -> HKLocationSample in
             HKLocationSample(
                 t: loc.timestamp.timeIntervalSince(workoutStart),

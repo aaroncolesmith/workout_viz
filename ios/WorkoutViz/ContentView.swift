@@ -51,9 +51,20 @@ struct ContentView: View {
                 .background(.thinMaterial, in: Capsule())
                 .padding(.top, 8)
             } else {
-                // Floating backfill button — visible when idle
-                Button {
-                    Task { await syncEngine.performFullBackfill() }
+                // Floating backfill button — visible when idle.
+                // Tap: resume / run backfill.
+                // Long-press: reset persisted progress so next run re-uploads everything.
+                Menu {
+                    Button {
+                        Task { await syncEngine.performFullBackfill() }
+                    } label: {
+                        Label("Run Backfill", systemImage: "arrow.clockwise")
+                    }
+                    Button(role: .destructive) {
+                        syncEngine.resetBackfillProgress()
+                    } label: {
+                        Label("Reset progress", systemImage: "trash")
+                    }
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.clockwise")
@@ -65,6 +76,8 @@ struct ContentView: View {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
                     .background(.thinMaterial, in: Capsule())
+                } primaryAction: {
+                    Task { await syncEngine.performFullBackfill() }
                 }
                 .padding(.top, 8)
             }
