@@ -101,9 +101,27 @@ def healthkit_sync(body: HKSyncRequest, x_api_key: Optional[str] = Header(defaul
     _require_healthkit_key(x_api_key)
 
     import hashlib
+    import polyline as _polyline
     from datetime import datetime
     from backend.services.data_service import get_data_service
     from backend.services.splits_service import from_healthkit_streams, compute_splits
+
+    def _encode_polyline(locations: list, max_points: int = 1500) -> str:
+        """Encode (lat, lng) points as a Google polyline, evenly downsampled."""
+        if not locations:
+            return ""
+        n = len(locations)
+        if n <= max_points:
+            pts = [(loc['lat'], loc['lng']) for loc in locations]
+        else:
+            step = n / max_points
+            pts = [(locations[int(i * step)]['lat'], locations[int(i * step)]['lng'])
+                   for i in range(max_points)]
+            # Always include the last point so the line closes visually.
+            last = locations[-1]
+            if pts[-1] != (last['lat'], last['lng']):
+                pts.append((last['lat'], last['lng']))
+        return _polyline.encode(pts)
 
     def _hk_id(source_id: str) -> int:
         # 6 bytes (48 bits) — fits within JS Number.MAX_SAFE_INTEGER
@@ -176,7 +194,7 @@ def healthkit_sync(body: HKSyncRequest, x_api_key: Optional[str] = Header(defaul
             skipped += 1
             continue
 
-        # ── Streams: compute splits + fastest segments ────────────────────
+        # ── Streams: compute splits + fastest segments + polyline ─────────
         if w.streams and w.streams.locations:
             locs = [loc.model_dump() for loc in w.streams.locations]
             hrs  = [hr.model_dump()  for hr in w.streams.heartrate] if w.streams.heartrate else None
@@ -194,13 +212,36 @@ def healthkit_sync(body: HKSyncRequest, x_api_key: Optional[str] = Header(defaul
                 svc.compute_and_save_summaries(activity_id)
                 splits_built += 1
 
-                # Backfill total_elevation_gain from altitude stream
-                total_elev_m = sum(float(s.get('elevation_gain_meters') or 0) for s in splits)
-                if total_elev_m > 0:
-                    conn.execute(
-                        "UPDATE activities SET total_elevation_gain = ? WHERE id = ?",
-                        (round(total_elev_m, 2), activity_id)
-                    )
+            # Backfill derived geo fields on the activity row.
+            polyline_str = _encode_polyline(locs)
+            start = locs[0]
+            end = locs[-1]
+            total_elev_m = sum(float(s.get('elevation_gain_meters') or 0) for s in splits)
+            conn.execute(
+                """
+                UPDATE activities
+                   SET map_polyline = ?,
+                       start_latlng = ?,
+                       end_latlng   = ?,
+                       start_lat    = ?,
+                       start_lng    = ?,
+                       end_lat      = ?,
+                       end_lng      = ?,
+                       total_elevation_gain = CASE
+                           WHEN ? > 0 THEN ? ELSE total_elevation_gain
+                       END
+                 WHERE id = ?
+                """,
+                (
+                    polyline_str or None,
+                    f"[{start['lat']},{start['lng']}]",
+                    f"[{end['lat']},{end['lng']}]",
+                    start['lat'], start['lng'],
+                    end['lat'],   end['lng'],
+                    total_elev_m, round(total_elev_m, 2),
+                    activity_id,
+                )
+            )
 
     conn.commit()
 
