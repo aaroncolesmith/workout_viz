@@ -620,68 +620,25 @@ class SyncService:
         return results
 
     def _process_streams_to_splits(self, activity_id, streams, detailed_act) -> List[dict]:
-        """Convert raw GPS/sensor streams into 0.1-mile buckets."""
-        # Convert streams to a DataFrame for easier processing
-        data = {}
-        for k, v in streams.items():
-            data[k] = v.data
-        
-        df = pd.DataFrame(data)
-        if 'distance' not in df.columns:
+        """Convert raw Strava GPS/sensor streams into 0.1-mile buckets."""
+        from backend.services.splits_service import from_strava_streams, compute_splits
+
+        bundle = from_strava_streams(streams)
+        if not bundle.distance:
             return []
-            
-        # Convert distance to miles
-        df['distance_miles'] = df['distance'] / 1609.34
-        
-        # Create 0.1 mile buckets
-        df['bucket'] = (df['distance_miles'] / 0.1).astype(int) + 1
-        
-        # Max bucket (total distance in 0.1 mi increments)
-        max_dist_miles = detailed_act.distance.magnitude / 1609.34 if hasattr(detailed_act.distance, 'magnitude') else float(detailed_act.distance) / 1609.34
-        max_bucket = int(max_dist_miles / 0.1)
-        
-        splits = []
+
+        dist = detailed_act.distance
+        total_miles = (dist.magnitude / 1609.34) if hasattr(dist, 'magnitude') else float(dist) / 1609.34
+
         name = getattr(detailed_act, 'name', 'Activity')
         date_str = detailed_act.start_date.strftime('%Y-%m-%d') if detailed_act.start_date else ''
-
-        # Group by bucket and aggregate
-        # We want the time difference for each bucket
-        # and the average sensor values
-        
-        for b in range(1, max_bucket + 1):
-            bucket_df = df[df['bucket'] == b]
-            if bucket_df.empty:
-                continue
-            
-            # Time spent in this bucket
-            # (Last timestamp in bucket - First timestamp in bucket)
-            # This is an approximation if the stream isn't perfectly dense
-            time_secs = bucket_df['time'].max() - bucket_df['time'].min()
-            
-            # If a bucket has only 1 point, time_secs is 0. 
-            # We can use the difference between buckets too, but this is simpler for now.
-            if b > 1:
-                prev_max_time = df[df['bucket'] == b-1]['time'].max()
-                if pd.notna(prev_max_time):
-                    time_secs = bucket_df['time'].max() - prev_max_time
-
-            splits.append({
-                '0.1_mile': b,
-                'time_seconds': int(time_secs),
-                'time_minutes': f"{int(time_secs // 60):02d}:{int(time_secs % 60):02d}",
-                'max_heartrate': float(bucket_df['heartrate'].max()) if 'heartrate' in bucket_df.columns else None,
-                'avg_heartrate': float(bucket_df['heartrate'].mean()) if 'heartrate' in bucket_df.columns else None,
-                'avg_cadence': float(bucket_df['cadence'].mean()) if 'cadence' in bucket_df.columns else None,
-                'avg_velocity': float(bucket_df['velocity_smooth'].mean()) if 'velocity_smooth' in bucket_df.columns else None,
-                'elevation_gain_meters': float(max(0, bucket_df['altitude'].max() - bucket_df['altitude'].min())) if 'altitude' in bucket_df.columns else 0.0,
-                'activity_id': activity_id,
-                'activity_name': name,
-                'total_distance_miles': round(b * 0.1, 1),
-                'date': date_str,
-                'id': activity_id
-            })
-            
-        return splits
+        return compute_splits(
+            bundle,
+            activity_id=activity_id,
+            activity_name=name,
+            date_str=date_str,
+            total_distance_miles=total_miles,
+        )
 
     def _activity_to_dict(self, sa: SummaryActivity) -> dict:
         """Convert stravalib Activity to a dictionary matching our CSV format."""
