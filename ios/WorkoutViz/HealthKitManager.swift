@@ -1,5 +1,6 @@
 import Foundation
 import HealthKit
+import CoreLocation
 
 /// Reads workouts and heart rate from HealthKit.
 final class HealthKitManager {
@@ -9,6 +10,7 @@ final class HealthKitManager {
     // Types we request read access for
     private let readTypes: Set<HKObjectType> = [
         HKObjectType.workoutType(),
+        HKSeriesType.workoutRoute(),
         HKObjectType.quantityType(forIdentifier: .heartRate)!,
         HKObjectType.quantityType(forIdentifier: .distanceWalkingRunning)!,
         HKObjectType.quantityType(forIdentifier: .distanceCycling)!,
@@ -65,6 +67,62 @@ final class HealthKitManager {
         let bpms = samples.map { $0.quantity.doubleValue(for: .init(from: "count/min")) }
         return (bpms.reduce(0, +) / Double(bpms.count), bpms.max())
     }
+
+    /// Fetch the full per-sample HR series for a workout. Each tuple is (timestamp, bpm).
+    func fetchHeartRateSeries(for workout: HKWorkout) async throws -> [(Date, Double)] {
+        let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate)!
+        let predicate = HKQuery.predicateForSamples(
+            withStart: workout.startDate, end: workout.endDate, options: .strictStartDate)
+        let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+
+        let samples: [HKQuantitySample] = try await withCheckedThrowingContinuation { cont in
+            let query = HKSampleQuery(
+                sampleType: hrType, predicate: predicate,
+                limit: HKObjectQueryNoLimit, sortDescriptors: [sort]
+            ) { _, s, err in
+                if let err { cont.resume(throwing: err); return }
+                cont.resume(returning: (s as? [HKQuantitySample]) ?? [])
+            }
+            store.execute(query)
+        }
+        let bpmUnit = HKUnit(from: "count/min")
+        return samples.map { ($0.startDate, $0.quantity.doubleValue(for: bpmUnit)) }
+    }
+
+    /// Fetch the full GPS route for a workout as a sorted list of CLLocations.
+    /// Returns [] when the workout has no route samples (strength, indoor, etc).
+    func fetchRoute(for workout: HKWorkout) async throws -> [CLLocation] {
+        // 1. Find the route object(s) associated with this workout.
+        let routePredicate = HKQuery.predicateForObjects(from: workout)
+        let routeSamples: [HKWorkoutRoute] = try await withCheckedThrowingContinuation { cont in
+            let q = HKSampleQuery(
+                sampleType: HKSeriesType.workoutRoute(), predicate: routePredicate,
+                limit: HKObjectQueryNoLimit, sortDescriptors: nil
+            ) { _, s, err in
+                if let err { cont.resume(throwing: err); return }
+                cont.resume(returning: (s as? [HKWorkoutRoute]) ?? [])
+            }
+            store.execute(q)
+        }
+        guard !routeSamples.isEmpty else { return [] }
+
+        // 2. For each route, stream its CLLocations. HKWorkoutRouteQuery's result
+        //    handler fires repeatedly until `done == true`.
+        var all: [CLLocation] = []
+        for route in routeSamples {
+            let locs: [CLLocation] = try await withCheckedThrowingContinuation { cont in
+                var acc: [CLLocation] = []
+                let q = HKWorkoutRouteQuery(route: route) { _, batch, done, err in
+                    if let err { cont.resume(throwing: err); return }
+                    if let batch { acc.append(contentsOf: batch) }
+                    if done { cont.resume(returning: acc) }
+                }
+                store.execute(q)
+            }
+            all.append(contentsOf: locs)
+        }
+        return all.sorted { $0.timestamp < $1.timestamp }
+    }
 }
 
 // MARK: - HKWorkout helpers
@@ -91,6 +149,16 @@ extension HKWorkoutActivityType {
         case .rowing:                      return "Rowing"
         case .cooldown:                    return "Cooldown"
         default:                           return "Workout"
+        }
+    }
+
+    /// Which workout types are expected to have GPS route data worth fetching.
+    var isGPS: Bool {
+        switch self {
+        case .running, .cycling, .walking, .hiking, .swimming:
+            return true
+        default:
+            return false
         }
     }
 }

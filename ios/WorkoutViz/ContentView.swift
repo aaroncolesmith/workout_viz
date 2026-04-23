@@ -38,7 +38,7 @@ struct ContentView: View {
             if syncEngine.isSyncing {
                 HStack(spacing: 6) {
                     ProgressView().scaleEffect(0.7)
-                    Text("Syncing workouts…")
+                    Text(syncEngine.syncProgress.isEmpty ? "Syncing…" : syncEngine.syncProgress)
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
