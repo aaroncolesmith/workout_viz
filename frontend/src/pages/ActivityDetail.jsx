@@ -287,10 +287,14 @@ export default function ActivityDetail() {
   }
 
   if (!activity) {
+    const errMsg = detailQuery.error?.message || 'Activity not found';
     return (
       <div className="empty-state">
-        <span>Activity not found</span>
-        <button className="filter-chip" onClick={() => navigate('/')}>← Back to Dashboard</button>
+        <span>{errMsg}</span>
+        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 8, fontFamily: 'monospace' }}>
+          id: {id}
+        </div>
+        <button className="filter-chip" onClick={() => navigate('/')} style={{ marginTop: 12 }}>← Back to Dashboard</button>
       </div>
     );
   }
