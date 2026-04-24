@@ -132,31 +132,29 @@ export default function FitnessChart() {
 
   return (
     <div>
-      {/* ── Header row ── */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 'var(--space-md)' }}>
+      {/* ── Header — stacks on mobile, row on desktop ── */}
+      <div className="chart-header-stack" style={{ marginBottom: 'var(--space-md)' }}>
         <div>
           <div className="section-title">Fitness &amp; Fatigue</div>
           <p style={{ margin: '4px 0 0', fontSize: '0.68rem', color: 'var(--text-muted)', fontFamily: "'Inter', sans-serif" }}>
-            Acute Training Load (ATL) vs Chronic Training Load (CTL)
+            Acute (ATL) vs Chronic (CTL) Training Load
           </p>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-          {/* Legend */}
-          <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
+        <div className="chart-header-controls">
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <div style={{ width: 20, height: 2, background: COLORS.ctl, borderRadius: 1 }} />
-              <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Fitness</span>
+              <div style={{ width: 16, height: 2, background: COLORS.ctl, borderRadius: 1 }} />
+              <span style={{ fontSize: '0.58rem', color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Fitness</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <div style={{ width: 20, height: 0, borderTop: `2px dashed ${COLORS.atl}` }} />
-              <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Fatigue</span>
+              <div style={{ width: 16, height: 0, borderTop: `2px dashed ${COLORS.atl}` }} />
+              <span style={{ fontSize: '0.58rem', color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Fatigue</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <div style={{ width: 20, height: 0, borderTop: `2px dashed ${COLORS.tsb}` }} />
-              <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Form</span>
+              <div style={{ width: 16, height: 0, borderTop: `2px dashed ${COLORS.tsb}` }} />
+              <span style={{ fontSize: '0.58rem', color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Form</span>
             </div>
           </div>
-          {/* Date range selector */}
           <div style={{ display: 'flex', gap: 2 }}>
             {DATE_PRESETS.map(p => (
               <button

@@ -78,7 +78,7 @@ export default function RacePredictor() {
       )}
 
       {predictions.length > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 'var(--space-sm)' }}>
+        <div className="race-predictor-grid">
           {predictions.map(p => <PredictionCard key={p.target_label} pred={p} navigate={navigate} />)}
         </div>
       )}
@@ -107,14 +107,7 @@ function PredictionCard({ pred, navigate }) {
       }}>
         {pred.target_label}
       </div>
-      <div style={{
-        fontFamily: 'Manrope, sans-serif',
-        fontSize: '2rem',
-        fontWeight: 700,
-        color: 'var(--text-primary)',
-        letterSpacing: '-0.03em',
-        lineHeight: 1,
-      }}>
+      <div className="race-predictor-time">
         {pred.predicted_time_str}
       </div>
       <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 6, fontFamily: "'Inter', sans-serif" }}>

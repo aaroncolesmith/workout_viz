@@ -131,13 +131,13 @@ export default function BestSegmentsTrend({ type: typeProp, date_from }) {
 
   return (
     <div className="glass-card chart-container" style={{ minWidth: 0, minHeight: 450 }}>
-      <div className="section-header" style={{ marginBottom: 15 }}>
+      <div className="section-header chart-header-stack" style={{ marginBottom: 15 }}>
         <div>
           <span className="section-title">Best Benchmarks</span>
           <span className="section-subtitle">Fastest efforts for {selectedSegment.label}</span>
         </div>
-        
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+
+        <div className="chart-header-controls" style={{ flexWrap: 'wrap' }}>
              {!typeProp && (
                <select 
                   value={selectedType}
@@ -173,7 +173,7 @@ export default function BestSegmentsTrend({ type: typeProp, date_from }) {
       </div>
 
       {rawData.length > 0 ? (
-        <div style={{ display: 'grid', gridTemplateColumns: '7fr 3fr', gap: 20 }}>
+        <div className="benchmarks-grid">
           {/* Main Scatter Chart */}
           <div style={{ position: 'relative', minWidth: 0, zIndex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginBottom: 8, minHeight: 22 }}>

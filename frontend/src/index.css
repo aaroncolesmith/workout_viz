@@ -456,6 +456,48 @@ a:hover {
   gap: var(--space-md);
 }
 
+/* Chart header: title on left, legend + controls on right on desktop;
+   stacks vertically on mobile so neither side squishes. */
+.chart-header-stack {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+.chart-header-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+/* Race Predictor cards: 4-wide desktop, 2-wide mobile. */
+.race-predictor-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-sm);
+}
+.race-predictor-time {
+  font-family: 'Manrope', sans-serif;
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.03em;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Best Benchmarks: scatter left, top-10 right on desktop; stacks mobile. */
+.benchmarks-grid {
+  display: grid;
+  grid-template-columns: 7fr 3fr;
+  gap: 20px;
+  min-width: 0;
+}
+
 .kinetica-stat-card {
   background: #1c1b1b;
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -669,8 +711,22 @@ a:hover {
     grid-template-columns: repeat(2, 1fr);
   }
   .dashboard-split-grid,
-  .dashboard-charts-grid {
+  .dashboard-charts-grid,
+  .benchmarks-grid {
     grid-template-columns: 1fr;
+  }
+  .race-predictor-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .race-predictor-time {
+    font-size: 1.5rem;
+  }
+  .chart-header-stack {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .chart-header-controls {
+    gap: 10px;
   }
   .dashboard-hero-header {
     flex-direction: column;
