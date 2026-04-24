@@ -112,9 +112,6 @@ export default function App() {
     <BrowserRouter>
       <div className="app-layout">
         <header className="app-header">
-          <NavLink to="/" className="app-logo">
-            KINETICA OBSIDIAN
-          </NavLink>
           <nav className="app-nav">
             <NavLink to="/" end className={({ isActive }) => isActive ? 'active' : ''}>
               Dashboard
@@ -124,7 +121,6 @@ export default function App() {
             </NavLink>
             <AdvancedMenu />
           </nav>
-          <div />
         </header>
 
         <main className="page-container">
