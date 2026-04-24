@@ -5,7 +5,7 @@ import {
   BarChart, Bar, Cell, ReferenceArea,
 } from 'recharts';
 import { useQuery } from '@tanstack/react-query';
-import { getOverview, getTrends, getRecentPRs } from '../utils/api';
+import { getOverview, getTrends, getBestPRs } from '../utils/api';
 import {
   formatPace, formatDistance, formatHR, activityColor, formatShortDate, formatActivityName,
 } from '../utils/format';
@@ -19,6 +19,82 @@ import SafeResponsiveContainer from '../components/SafeResponsiveContainer';
 import { useChartZoom } from '../hooks/useChartZoom';
 
 const TYPE_ALL = 'All';
+
+const PR_SPORT_GROUPS = [
+  {
+    label: 'Run',
+    accent: '#38bdf8',
+    matchesType: (t) => ['Run', 'VirtualRun', 'TrailRun'].includes(t),
+    distances: ['1 Mile', '2 Miles', '5K', 'Half Marathon', 'Marathon'],
+  },
+  {
+    label: 'Bike',
+    accent: '#818cf8',
+    matchesType: (t) => ['Ride', 'VirtualRide'].includes(t),
+    distances: ['5 Miles', '10 Miles', '25 Miles', '50 Miles'],
+  },
+  {
+    label: 'Swim',
+    accent: '#22d3ee',
+    matchesType: (t) => t === 'Swim',
+    distances: ['1/4 Mile', '1/2 Mile', '1 Mile'],
+  },
+];
+
+function PRSportGroup({ label, accent, distances, bestPRs, matchesType, onSelect }) {
+  const lookup = {};
+  for (const pr of bestPRs) {
+    if (!matchesType(pr.activity_type)) continue;
+    const existing = lookup[pr.distance_label];
+    if (!existing || pr.time_seconds < existing.time_seconds) {
+      lookup[pr.distance_label] = pr;
+    }
+  }
+  const cards = distances.map(d => ({ distance: d, pr: lookup[d] || null }));
+  const hasAny = cards.some(c => c.pr);
+  if (!hasAny) return null;
+
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{
+        fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase',
+        letterSpacing: '0.14em', color: accent, marginBottom: 8,
+      }}>
+        {label}
+      </div>
+      <div className="pr-card-grid">
+        {cards.map(({ distance, pr }) => (
+          <button
+            key={distance}
+            onClick={pr ? () => onSelect(pr.activity_id) : undefined}
+            disabled={!pr}
+            style={{
+              background: pr ? `${accent}14` : 'rgba(255,255,255,0.02)',
+              border: `1px solid ${pr ? `${accent}40` : 'rgba(255,255,255,0.06)'}`,
+              borderRadius: 8,
+              padding: '10px 12px',
+              cursor: pr ? 'pointer' : 'default',
+              textAlign: 'left',
+              opacity: pr ? 1 : 0.35,
+            }}
+          >
+            <div style={{ fontSize: '0.6rem', color: pr ? `${accent}cc` : 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.04em', marginBottom: 4 }}>
+              {distance}
+            </div>
+            <div style={{ fontSize: '1.1rem', fontWeight: 700, color: pr ? accent : 'var(--text-muted)', fontFamily: 'Manrope, sans-serif', letterSpacing: '-0.02em', lineHeight: 1 }}>
+              {pr ? pr.time_str : '—'}
+            </div>
+            {pr && (
+              <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', marginTop: 4 }}>
+                {pr.pace_str} · {pr.date}
+              </div>
+            )}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 // Shared zoom badge component — keeps JSX DRY
 function ZoomHint({ isZoomed, onReset, color = '#38bdf8' }) {
@@ -64,11 +140,11 @@ export default function Dashboard() {
     queryFn: getOverview,
   });
   const prsQuery = useQuery({
-    queryKey: ['recent-prs'],
-    queryFn: () => getRecentPRs({ limit: 10 }),
+    queryKey: ['best-prs'],
+    queryFn: getBestPRs,
     staleTime: 5 * 60 * 1000,
   });
-  const recentPRs = prsQuery.data?.prs || [];
+  const bestPRs = prsQuery.data?.prs || [];
   const trendsQuery = useQuery({
     queryKey: ['trends', trendParams],
     queryFn: () => getTrends(trendParams),
@@ -253,45 +329,23 @@ export default function Dashboard() {
       </div>
 
 
-      {/* ── Recent PRs banner ── */}
-      {recentPRs.length > 0 && (
-        <div className="glass-card" style={{ marginBottom: 'var(--space-xl)', padding: 'var(--space-md)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-            <span style={{ fontFamily: "'Inter', sans-serif", fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.18em', color: 'var(--text-muted)' }}>
-              Personal Records
-            </span>
+      {/* ── Personal Records, grouped by sport ── */}
+      {bestPRs.length > 0 && (
+        <div className="glass-card" style={{ marginBottom: 'var(--space-xl)', padding: 'var(--space-lg)' }}>
+          <div style={{ fontFamily: "'Inter', sans-serif", fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.18em', color: 'var(--text-muted)', marginBottom: 14 }}>
+            Personal Records
           </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {recentPRs.map((pr) => (
-              <button
-                key={`${pr.activity_id}-${pr.distance_label}`}
-                onClick={() => navigate(`/activity/${pr.activity_id}`)}
-                style={{
-                  background: 'rgba(251,191,36,0.1)',
-                  border: '1px solid rgba(251,191,36,0.3)',
-                  borderRadius: 8,
-                  padding: '6px 12px',
-                  cursor: 'pointer',
-                  textAlign: 'left',
-                }}
-              >
-                <div style={{ fontSize: '0.65rem', color: 'rgba(251,191,36,0.7)', fontWeight: 600, marginBottom: 2 }}>
-                  {pr.distance_label}
-                </div>
-                <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#fbbf24', fontFamily: 'var(--font-mono)' }}>
-                  {pr.time_str}
-                </div>
-                <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)', marginTop: 1 }}>
-                  {pr.pace_str} · {pr.date}
-                </div>
-                {pr.previous_best_seconds && (
-                  <div style={{ fontSize: '0.6rem', color: 'rgba(74,222,128,0.7)', marginTop: 1 }}>
-                    ↑ prev {Math.round((pr.previous_best_seconds - pr.time_seconds) / pr.time_seconds * 100 * -1)}% faster
-                  </div>
-                )}
-              </button>
-            ))}
-          </div>
+          {PR_SPORT_GROUPS.map(group => (
+            <PRSportGroup
+              key={group.label}
+              label={group.label}
+              accent={group.accent}
+              distances={group.distances}
+              bestPRs={bestPRs}
+              matchesType={group.matchesType}
+              onSelect={(id) => navigate(`/activity/${id}`)}
+            />
+          ))}
         </div>
       )}
 

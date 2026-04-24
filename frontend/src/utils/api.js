@@ -192,3 +192,7 @@ export async function getRecentPRs(params = {}) {
   if (params.limit) qs.set('limit', params.limit);
   return fetchJSON(`${BASE}/activities/prs?${qs.toString()}`);
 }
+
+export async function getBestPRs() {
+  return fetchJSON(`${BASE}/activities/prs/best`);
+}

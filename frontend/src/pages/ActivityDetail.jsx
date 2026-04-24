@@ -294,7 +294,7 @@ export default function ActivityDetail() {
         <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 8, fontFamily: 'monospace' }}>
           id: {id}
         </div>
-        <button className="filter-chip" onClick={() => navigate('/')} style={{ marginTop: 12 }}>← Back to Dashboard</button>
+        <button className="filter-chip" onClick={() => navigate('/activities')} style={{ marginTop: 12 }}>← Back to Activities</button>
       </div>
     );
   }
@@ -311,8 +311,8 @@ export default function ActivityDetail() {
 
   return (
     <div>
-      <button className="back-btn" onClick={() => navigate('/')}>
-        ← Back to Dashboard
+      <button className="back-btn" onClick={() => navigate('/activities')}>
+        ← Back to Activities
       </button>
 
       {/* ── Header (always visible) ── */}

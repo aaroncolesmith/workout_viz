@@ -29,11 +29,12 @@ function AdvancedMenu() {
   const go = (path) => { setOpen(false); navigate(path); };
 
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
+    <div ref={ref} style={{ position: 'relative', width: '100%' }}>
       <button
         onClick={() => setOpen(v => !v)}
         className={isActive ? 'active' : ''}
         style={{
+          width: '100%',
           padding: 'var(--space-sm) var(--space-lg)',
           fontFamily: 'var(--font-body)',
           fontSize: '0.72rem',
@@ -47,6 +48,7 @@ function AdvancedMenu() {
           cursor: 'pointer',
           display: 'inline-flex',
           alignItems: 'center',
+          justifyContent: 'center',
           gap: 4,
         }}
       >

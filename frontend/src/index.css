@@ -182,8 +182,16 @@ a:hover {
 .app-nav {
   display: flex;
   gap: 0;
-  justify-content: flex-start;
   width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.app-nav > a,
+.app-nav > div {
+  flex: 1 1 0;
+  display: flex;
+  justify-content: center;
 }
 
 .app-nav a {
@@ -197,6 +205,8 @@ a:hover {
   text-decoration: none;
   border-bottom: 2px solid transparent;
   transition: all var(--transition-fast);
+  text-align: center;
+  width: 100%;
 }
 .app-nav a:hover {
   color: var(--text-secondary);
@@ -498,6 +508,13 @@ a:hover {
   min-width: 0;
 }
 
+/* PR cards — up to 5 per row on desktop, 2 on mobile. */
+.pr-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-sm);
+}
+
 .kinetica-stat-card {
   background: #1c1b1b;
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -716,6 +733,9 @@ a:hover {
     grid-template-columns: 1fr;
   }
   .race-predictor-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .pr-card-grid {
     grid-template-columns: repeat(2, 1fr);
   }
   .race-predictor-time {

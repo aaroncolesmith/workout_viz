@@ -125,6 +125,31 @@ def get_recent_prs(
     return {"prs": prs, "count": len(prs)}
 
 
+@router.get("/activities/prs/best")
+def get_best_prs():
+    """Fastest PR for every (activity_type, distance_label) the user has."""
+    from backend.services.database import get_conn
+    conn = get_conn()
+    rows = conn.execute("""
+        WITH ranked AS (
+            SELECT p.*, a.type AS activity_type,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY a.type, p.distance_label
+                       ORDER BY p.time_seconds ASC
+                   ) AS rn
+              FROM pr_events p
+              LEFT JOIN activities a ON a.id = p.activity_id
+             WHERE a.type IS NOT NULL
+        )
+        SELECT activity_id, activity_name, activity_type, date,
+               distance_label, distance_miles, time_seconds,
+               time_str, pace_str
+          FROM ranked
+         WHERE rn = 1
+    """).fetchall()
+    return {"prs": [dict(r) for r in rows], "count": len(rows)}
+
+
 @router.get("/activities/{activity_id}", response_model=schemas.ActivityDetail)
 def get_activity(activity_id: int):
     """Get full detail for a single activity."""
