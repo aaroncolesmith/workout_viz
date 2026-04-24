@@ -401,51 +401,77 @@ def _dedupe_apple_health_activities(conn: sqlite3.Connection):
         logger.info(f"Deduped {total_dropped} duplicate Apple Health activities across {len(groups)} groups")
 
 
+_EXTENDED_PR_FLAG = "extended_pr_distances_backfilled"
+
+
 def _backfill_extended_pr_distances(conn: sqlite3.Connection):
     """
-    One-shot: recompute summaries + PR events for every activity with splits,
-    so that the newly-added target distances (1/4 Mi, 1/2 Mi, 25 Mi, 50 Mi)
-    show up for historical data without needing a full sync re-run.
+    Recompute summaries + PR events for every activity with splits, so the
+    newly-added target distances (1/4 Mi, 1/2 Mi, 25 Mi, 50 Mi) show up
+    for historical data.
 
-    Idempotent via a user_settings flag. Safe to run on first startup after
-    deploy; subsequent startups see the flag and no-op.
+    Runs in a daemon thread — startup returns in milliseconds so Railway's
+    healthcheck passes while the backfill proceeds in the background.
+    Idempotent: compute_and_save_summaries deletes and re-inserts, so if
+    the container is killed mid-run the next restart just starts over
+    (we haven't set the done flag yet).
     """
-    FLAG = "extended_pr_distances_backfilled"
     existing = conn.execute(
-        "SELECT value FROM user_settings WHERE key = ?", (FLAG,)
+        "SELECT value FROM user_settings WHERE key = ?", (_EXTENDED_PR_FLAG,)
     ).fetchone()
-    if existing:
+    if existing and existing["value"] == "done":
         return
 
-    rows = conn.execute(
-        "SELECT DISTINCT activity_id FROM splits"
-    ).fetchall()
-    ids = [r["activity_id"] for r in rows]
-    if not ids:
+    import threading
+    threading.Thread(
+        target=_run_extended_pr_backfill,
+        name="extended-pr-backfill",
+        daemon=True,
+    ).start()
+    logger.info("Extended PR distances backfill scheduled in background")
+
+
+def _run_extended_pr_backfill():
+    """Background worker — has its own thread-local SQLite connection."""
+    try:
+        conn = get_conn()
+
+        ids = [r["activity_id"] for r in conn.execute(
+            "SELECT DISTINCT activity_id FROM splits"
+        ).fetchall()]
+        total = len(ids)
+        if total == 0:
+            conn.execute(
+                "INSERT OR REPLACE INTO user_settings (key, value) VALUES (?, 'done')",
+                (_EXTENDED_PR_FLAG,)
+            )
+            conn.commit()
+            logger.info("Extended PR backfill: no activities with splits; marked done")
+            return
+
+        logger.info(f"Extended PR backfill starting: {total} activities")
+
+        from backend.services.data_service import get_data_service
+        svc = get_data_service()
+
+        done = failed = 0
+        for aid in ids:
+            try:
+                svc.compute_and_save_summaries(aid)
+                done += 1
+            except Exception as e:
+                failed += 1
+                logger.warning(f"PR backfill failed for activity {aid}: {e}")
+
+            if (done + failed) % 50 == 0:
+                logger.info(f"Extended PR backfill: {done + failed}/{total} "
+                            f"(ok={done}, fail={failed})")
+
         conn.execute(
             "INSERT OR REPLACE INTO user_settings (key, value) VALUES (?, 'done')",
-            (FLAG,)
+            (_EXTENDED_PR_FLAG,)
         )
         conn.commit()
-        return
-
-    logger.info(f"Recomputing summaries + PRs for {len(ids)} activities (extended PR distances backfill)")
-
-    # Import here to avoid a circular import at module load time.
-    from backend.services.data_service import get_data_service
-    svc = get_data_service()
-
-    done = 0
-    for aid in ids:
-        try:
-            svc.compute_and_save_summaries(aid)
-            done += 1
-        except Exception as e:
-            logger.warning(f"PR backfill failed for activity {aid}: {e}")
-
-    conn.execute(
-        "INSERT OR REPLACE INTO user_settings (key, value) VALUES (?, 'done')",
-        (FLAG,)
-    )
-    conn.commit()
-    logger.info(f"Extended PR distances backfill complete: {done} activities recomputed")
+        logger.info(f"Extended PR backfill complete: {done} ok, {failed} failed")
+    except Exception:
+        logger.exception("Extended PR backfill crashed")
