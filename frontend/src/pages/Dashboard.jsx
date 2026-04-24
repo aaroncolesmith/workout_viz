@@ -5,13 +5,10 @@ import {
   BarChart, Bar, Cell, ReferenceArea,
 } from 'recharts';
 import { useQuery } from '@tanstack/react-query';
-import { getActivities, getOverview, getTrends, getRecentPRs } from '../utils/api';
+import { getOverview, getTrends, getRecentPRs } from '../utils/api';
 import {
-  formatPace, formatDistance, formatDuration, formatHR,
-  activityClass, activityColor,
-  formatDate, formatRelativeDate, formatActivityName, formatShortDate,
+  formatPace, formatDistance, formatHR, activityColor, formatShortDate, formatActivityName,
 } from '../utils/format';
-import SportBadge from '../components/SportBadge';
 import ActivityCalendar from '../components/ActivityCalendar';
 import TypeDistribution from '../components/TypeDistribution';
 import BestSegmentsTrend from '../components/BestSegmentsTrend';
@@ -49,21 +46,12 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const [selectedType, setSelectedType] = useState(TYPE_ALL);
   const [selectedMonths, setSelectedMonths] = useState(12);
-  const [page, setPage] = useState(0);
-  const PAGE_SIZE = 2500; // Large page size to allow client-side filtering over history
   const dateCutoff = useMemo(() => {
     if (!selectedMonths) return null;
     const cutoff = new Date();
     cutoff.setMonth(cutoff.getMonth() - selectedMonths);
     return cutoff.toISOString().slice(0, 10);
   }, [selectedMonths]);
-
-  const activityParams = useMemo(() => {
-    const params = { limit: PAGE_SIZE, offset: page * PAGE_SIZE };
-    if (selectedType !== TYPE_ALL) params.type = selectedType;
-    if (dateCutoff) params.date_from = dateCutoff;
-    return params;
-  }, [page, selectedType, dateCutoff]);
 
   const trendParams = useMemo(() => {
     const params = {};
@@ -81,27 +69,19 @@ export default function Dashboard() {
     staleTime: 5 * 60 * 1000,
   });
   const recentPRs = prsQuery.data?.prs || [];
-  const activitiesQuery = useQuery({
-    queryKey: ['activities', activityParams],
-    queryFn: () => getActivities(activityParams),
-  });
   const trendsQuery = useQuery({
     queryKey: ['trends', trendParams],
     queryFn: () => getTrends(trendParams),
   });
   const overview = overviewQuery.data;
-  const activities = activitiesQuery.data?.activities || [];
   const trends = trendsQuery.data?.data || [];
-  const totalActivities = activitiesQuery.data?.total || 0;
-  const loading = activitiesQuery.isLoading;
 
   const types = useMemo(() => {
     if (!overview?.activity_types) return [TYPE_ALL];
     return [TYPE_ALL, ...Object.keys(overview.activity_types)];
   }, [overview]);
 
-  // Note: trends and activities are now filtered on the backend by dateCutoff
-  const filteredActivities = activities;
+  // Trends are already filtered server-side by type + dateCutoff above.
   const filteredTrends = trends;
 
 
@@ -321,7 +301,7 @@ export default function Dashboard() {
           <button
             key={t}
             className={`filter-chip ${selectedType === t ? 'active' : ''}`}
-            onClick={() => { setSelectedType(t); setPage(0); }}
+            onClick={() => setSelectedType(t)}
           >
             {t}
             {t !== TYPE_ALL && (dynamicStats?.typeCounts?.[t] || overview.activity_types[t]) && (
@@ -569,78 +549,6 @@ export default function Dashboard() {
       </div>
 
 
-      {/* ── Activity List ── */}
-      <div className="section-header">
-        <span className="section-title">
-          Recent Activities
-          <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: '0.85rem', marginLeft: 8 }}>
-            {filteredActivities.length.toLocaleString()} total
-          </span>
-        </span>
-      </div>
-
-      {loading ? (
-        <div className="loading-state"><div className="loading-spinner" /></div>
-      ) : (
-        <>
-          <div className="activity-list">
-            {filteredActivities.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map(a => (
-              <div
-                key={a.id}
-                className={`activity-row ${activityClass(a.type)}`}
-                onClick={() => navigate(`/activity/${a.id}`)}
-              >
-                <SportBadge type={a.type} size={36} />
-                <div className="activity-info">
-                  <div className="activity-name">{formatActivityName(a)}</div>
-                  <div className="activity-date">{formatRelativeDate(a.date)} · {formatDate(a.date)}</div>
-                </div>
-                <div className="activity-metric">
-                  <div className="metric-value">{formatDistance(a.distance_miles)}</div>
-                  <div className="metric-label">miles</div>
-                </div>
-                <div className="activity-metric">
-                  <div className="metric-value">{formatDuration(a.moving_time_min)}</div>
-                  <div className="metric-label">time</div>
-                </div>
-                <div className="activity-metric">
-                  <div className="metric-value">{formatPace(a.pace)}</div>
-                  <div className="metric-label">pace</div>
-                </div>
-                <div className="activity-metric">
-                  <div className="metric-value" style={{ color: a.average_heartrate ? '#f472b6' : 'inherit' }}>
-                    {formatHR(a.average_heartrate)}
-                  </div>
-                  <div className="metric-label">avg hr</div>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Pagination */}
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 'var(--space-md)', marginTop: 'var(--space-lg)' }}>
-            <button
-              className="filter-chip"
-              disabled={page === 0}
-              onClick={() => setPage(p => p - 1)}
-              style={{ opacity: page === 0 ? 0.3 : 1 }}
-            >
-              ← Previous
-            </button>
-            <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem', padding: '6px 0' }}>
-              {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalActivities)} of {totalActivities}
-            </span>
-            <button
-              className="filter-chip"
-              disabled={(page + 1) * PAGE_SIZE >= totalActivities}
-              onClick={() => setPage(p => p + 1)}
-              style={{ opacity: (page + 1) * PAGE_SIZE >= totalActivities ? 0.3 : 1 }}
-            >
-              Next →
-            </button>
-          </div>
-        </>
-      )}
     </div>
   );
 }
