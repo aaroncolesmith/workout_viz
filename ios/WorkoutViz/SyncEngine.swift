@@ -48,14 +48,62 @@ final class SyncEngine: ObservableObject {
     }
 
     /// Full historical backfill — ignores lastSyncDate and goes back 10 years.
-    /// Resumable: already-uploaded workouts are skipped based on persisted UUIDs.
+    /// Resumable: already-uploaded workouts are skipped based on persisted UUIDs,
+    /// EXCEPT those the backend reports as missing splits — those are always
+    /// re-attempted, so changes in the upload pipeline (e.g. adding treadmill
+    /// distance-sample support) can fill in gaps without a manual reset.
     func performFullBackfill() async {
-        // Re-request auth in case workoutRoute wasn't granted earlier — iOS
-        // will silently no-op if the user already approved everything.
         try? await hk.requestAuthorization()
         print("[SyncEngine] route auth status = \(hk.routeAuthStatus.rawValue) " +
               "(0=notDetermined, 1=denied, 2=authorized — read auth may always show 0)")
-        await performSync(force: true, since: tenYearsAgo())
+
+        let forceRetryKeys = await fetchMissingStreamKeys()
+        print("[SyncEngine] backend reports \(forceRetryKeys.count) workouts missing splits")
+
+        await performSync(force: true, since: tenYearsAgo(), forceRetryKeys: forceRetryKeys)
+    }
+
+    /// Ask the backend which apple_health activities have no splits yet. Returns
+    /// a set of "<type>|<YYYY-MM-DD HH:mm>" keys we can compare against each
+    /// HKWorkout's (type, start_date) to decide whether to force a retry.
+    private func fetchMissingStreamKeys() async -> Set<String> {
+        guard let url = URL(string: "\(Config.backendURL)/api/import/healthkit/missing-streams") else {
+            return []
+        }
+        var req = URLRequest(url: url)
+        req.setValue(Config.healthkitAPIKey, forHTTPHeaderField: "X-Api-Key")
+        req.timeoutInterval = 30
+
+        do {
+            let (data, _) = try await URLSession.shared.data(for: req)
+            struct Resp: Decodable {
+                struct Item: Decodable { let type: String; let start_date: String }
+                let activities: [Item]
+            }
+            let decoded = try JSONDecoder().decode(Resp.self, from: data)
+
+            // Backend start_date is ISO8601 like "2026-04-21T18:56:54+00:00".
+            // Normalize to minute precision so iOS (which emits a slightly
+            // different ISO string) can match.
+            let iso = ISO8601DateFormatter()
+            var keys: Set<String> = []
+            for item in decoded.activities {
+                guard let d = iso.date(from: item.start_date) else { continue }
+                let minute = Self.minuteKey(d)
+                keys.insert("\(item.type)|\(minute)")
+            }
+            return keys
+        } catch {
+            print("[SyncEngine] fetchMissingStreamKeys failed: \(error)")
+            return []
+        }
+    }
+
+    private static func minuteKey(_ d: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm"
+        f.timeZone = TimeZone(identifier: "UTC")
+        return f.string(from: d)
     }
 
     /// Reset backfill progress so next backfill re-uploads everything.
@@ -68,7 +116,11 @@ final class SyncEngine: ObservableObject {
         Calendar.current.date(byAdding: .year, value: -10, to: Date())!
     }
 
-    func performSync(force: Bool = false, since overrideSince: Date? = nil) async {
+    func performSync(
+        force: Bool = false,
+        since overrideSince: Date? = nil,
+        forceRetryKeys: Set<String> = []
+    ) async {
         guard !isSyncing, hk.isAvailable else { return }
         isSyncing = true
         syncProgress = "Starting…"
@@ -100,8 +152,21 @@ final class SyncEngine: ObservableObject {
             return
         }
 
-        // Skip anything we've already uploaded — enables resumable backfill.
-        let pending = workouts.filter { !syncedSourceIds.contains($0.uuid.uuidString) }
+        // Skip workouts we've already uploaded UNLESS the backend says they're
+        // still missing splits — those always get retried so pipeline changes
+        // (e.g. indoor distance samples) can fill gaps without a manual reset.
+        let pending = workouts.filter { w in
+            if syncedSourceIds.contains(w.uuid.uuidString) {
+                let key = "\(w.workoutActivityType.backendType)|\(Self.minuteKey(w.startDate))"
+                if forceRetryKeys.contains(key) {
+                    // Remove from synced set so a successful retry can re-mark it.
+                    syncedSourceIds.remove(w.uuid.uuidString)
+                    return true
+                }
+                return false
+            }
+            return true
+        }
         let total = pending.count
         let alreadyDone = workouts.count - total
 
