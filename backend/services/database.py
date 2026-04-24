@@ -295,6 +295,7 @@ def _migrate_schema(conn: sqlite3.Connection):
 
     _migrate_apple_health_ids(conn)
     _dedupe_apple_health_activities(conn)
+    _backfill_extended_pr_distances(conn)
 
 
 # JS Number.MAX_SAFE_INTEGER = 2^53 - 1 = 9,007,199,254,740,991
@@ -398,3 +399,53 @@ def _dedupe_apple_health_activities(conn: sqlite3.Connection):
     conn.commit()
     if total_dropped:
         logger.info(f"Deduped {total_dropped} duplicate Apple Health activities across {len(groups)} groups")
+
+
+def _backfill_extended_pr_distances(conn: sqlite3.Connection):
+    """
+    One-shot: recompute summaries + PR events for every activity with splits,
+    so that the newly-added target distances (1/4 Mi, 1/2 Mi, 25 Mi, 50 Mi)
+    show up for historical data without needing a full sync re-run.
+
+    Idempotent via a user_settings flag. Safe to run on first startup after
+    deploy; subsequent startups see the flag and no-op.
+    """
+    FLAG = "extended_pr_distances_backfilled"
+    existing = conn.execute(
+        "SELECT value FROM user_settings WHERE key = ?", (FLAG,)
+    ).fetchone()
+    if existing:
+        return
+
+    rows = conn.execute(
+        "SELECT DISTINCT activity_id FROM splits"
+    ).fetchall()
+    ids = [r["activity_id"] for r in rows]
+    if not ids:
+        conn.execute(
+            "INSERT OR REPLACE INTO user_settings (key, value) VALUES (?, 'done')",
+            (FLAG,)
+        )
+        conn.commit()
+        return
+
+    logger.info(f"Recomputing summaries + PRs for {len(ids)} activities (extended PR distances backfill)")
+
+    # Import here to avoid a circular import at module load time.
+    from backend.services.data_service import get_data_service
+    svc = get_data_service()
+
+    done = 0
+    for aid in ids:
+        try:
+            svc.compute_and_save_summaries(aid)
+            done += 1
+        except Exception as e:
+            logger.warning(f"PR backfill failed for activity {aid}: {e}")
+
+    conn.execute(
+        "INSERT OR REPLACE INTO user_settings (key, value) VALUES (?, 'done')",
+        (FLAG,)
+    )
+    conn.commit()
+    logger.info(f"Extended PR distances backfill complete: {done} activities recomputed")

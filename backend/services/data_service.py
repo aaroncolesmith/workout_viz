@@ -322,13 +322,18 @@ class DataService:
                 if prev_best is None or my_t < prev_best:
                     # Map distance to label
                     label_map = {
+                        0.25:  "1/4 Mile",
+                        0.5:   "1/2 Mile",
                         1.0:   "1 Mile",
                         2.0:   "2 Miles",
                         3.107: "5K",
                         5.0:   "5 Miles",
                         6.214: "10K",
+                        10.0:  "10 Miles",
                         13.1:  "Half Marathon",
+                        25.0:  "25 Miles",
                         26.2:  "Marathon",
+                        50.0:  "50 Miles",
                     }
                     label = min(label_map, key=lambda k: abs(k - dist))
                     label = label_map[label]
