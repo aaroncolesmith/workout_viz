@@ -126,4 +126,8 @@ if _DIST.is_dir():
         index = _DIST / "index.html"
         if full_path and (_DIST / full_path).is_file():
             return FileResponse(str(_DIST / full_path))
-        return FileResponse(str(index))
+        # Never cache index.html — hashed assets handle their own caching
+        return FileResponse(
+            str(index),
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
