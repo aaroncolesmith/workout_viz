@@ -95,6 +95,16 @@ class HKStreams(BaseModel):
     heartrate: List[HKHeartRateSample] = []
 
 
+class HKSwimLap(BaseModel):
+    lap_number:       int
+    duration_seconds: float
+    distance_meters:  Optional[float] = None
+    stroke_type:      Optional[str] = None   # freestyle|backstroke|breaststroke|butterfly|kickboard|mixed
+    stroke_count:     Optional[int] = None
+    avg_heartrate:    Optional[float] = None
+    is_rest:          bool = False
+
+
 class HKWorkout(BaseModel):
     """Single workout sent from the iOS HealthKit sync engine."""
     source_id: str              # stable local UUID from HK (used for dedup)
@@ -106,6 +116,8 @@ class HKWorkout(BaseModel):
     active_energy_kcal: Optional[float] = None
     avg_heartrate: Optional[float] = None
     max_heartrate: Optional[float] = None
+    pool_length_meters: Optional[float] = None
+    swim_laps: List[HKSwimLap] = []
     # Optional — when present, backend computes splits + fastest segments.
     streams: Optional[HKStreams] = None
 
@@ -225,8 +237,8 @@ def healthkit_sync(body: HKSyncRequest, x_api_key: Optional[str] = Header(defaul
                     distance_miles, moving_time_min, elapsed_time_min,
                     pace, average_speed, average_heartrate, max_heartrate,
                     total_elevation_gain, date, start_date,
-                    has_heartrate, source, trainer
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    has_heartrate, source, trainer, pool_length_meters
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, (
                 activity_id,
                 activity_name,
@@ -245,8 +257,31 @@ def healthkit_sync(body: HKSyncRequest, x_api_key: Optional[str] = Header(defaul
                 1 if w.avg_heartrate else 0,
                 "apple_health",
                 0,
+                round(w.pool_length_meters, 2) if w.pool_length_meters else None,
             ))
             added += 1
+
+        # Insert swim laps (upsert: delete existing laps then re-insert)
+        if w.swim_laps:
+            conn.execute("DELETE FROM swim_laps WHERE activity_id = ?", (activity_id,))
+            for lap in w.swim_laps:
+                conn.execute("""
+                    INSERT INTO swim_laps
+                        (activity_id, lap_number, distance_meters, duration_seconds,
+                         stroke_type, stroke_count, avg_heartrate, is_rest)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    activity_id, lap.lap_number,
+                    lap.distance_meters or w.pool_length_meters,
+                    lap.duration_seconds, lap.stroke_type,
+                    lap.stroke_count, lap.avg_heartrate,
+                    1 if lap.is_rest else 0,
+                ))
+            if w.pool_length_meters:
+                conn.execute(
+                    "UPDATE activities SET pool_length_meters = ? WHERE id = ?",
+                    (round(w.pool_length_meters, 2), activity_id)
+                )
         else:
             # Existing row. Only worth continuing if we have streams to apply.
             has_locations = bool(w.streams and w.streams.locations)

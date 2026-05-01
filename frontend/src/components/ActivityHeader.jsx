@@ -16,38 +16,49 @@ export default function ActivityHeader({ activity }) {
       <div className="detail-header">
         {/* Left: badge + type label + title + date */}
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-            <SportBadge type={activity.type} size={30} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+            <SportBadge type={activity.type} size={34} />
             <span style={{
-              fontFamily: "'Inter', sans-serif",
-              fontSize: '0.62rem',
+              fontFamily: 'var(--font-body)',
+              fontSize: '12px',
               fontWeight: 700,
               textTransform: 'uppercase',
-              letterSpacing: '0.16em',
+              letterSpacing: '0.1em',
               color: accentColor,
+              background: `${accentColor}18`,
+              border: `1px solid ${accentColor}30`,
+              borderRadius: 20,
+              padding: '3px 10px',
             }}>
               {activityLabel(activity.sport_type || activity.type)}
             </span>
             {activity.trainer && (
-              <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', fontFamily: "'Inter', sans-serif" }}>
-                · Indoor
+              <span style={{
+                fontSize: '11px', color: 'var(--text-muted)',
+                background: 'rgba(255,255,255,0.04)',
+                border: '1px solid #2a2a32',
+                borderRadius: 20, padding: '3px 10px',
+                fontFamily: 'var(--font-body)',
+              }}>
+                Indoor
               </span>
             )}
             {isAppleHealth && (
               <span style={{
-                fontSize: '0.62rem', color: '#fb923c',
-                background: 'rgba(251,146,60,0.1)',
-                border: '1px solid rgba(251,146,60,0.25)',
-                borderRadius: 10, padding: '1px 8px',
-                fontFamily: "'Inter', sans-serif",
+                fontSize: '11px', color: '#f59e0b',
+                background: 'rgba(245,158,11,0.1)',
+                border: '1px solid rgba(245,158,11,0.25)',
+                borderRadius: 20, padding: '3px 10px',
+                fontFamily: 'var(--font-body)',
+                fontWeight: 600,
               }}>
                 Apple Health
               </span>
             )}
           </div>
-          <h1 className="detail-title">{formatActivityName(activity)}</h1>
-          <div className="detail-meta" style={{ marginTop: 8 }}>
-            <span className="detail-meta-item">{formatDate(activity.date)}</span>
+          <h1 className="detail-title" style={{ fontSize: '1.6rem', lineHeight: 1.1 }}>{formatActivityName(activity)}</h1>
+          <div className="detail-meta" style={{ marginTop: 6 }}>
+            <span className="detail-meta-item" style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{formatDate(activity.date)}</span>
           </div>
         </div>
 

@@ -272,6 +272,22 @@ def _create_schema():
             ON route_activities(activity_id);
         CREATE INDEX IF NOT EXISTS idx_routes_type
             ON routes(activity_type);
+
+        -- ── Swim laps (per-lap breakdown for pool swim activities) ────────────
+        CREATE TABLE IF NOT EXISTS swim_laps (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            activity_id         INTEGER NOT NULL,
+            lap_number          INTEGER NOT NULL,
+            distance_meters     REAL,
+            duration_seconds    REAL NOT NULL,
+            stroke_type         TEXT,   -- freestyle|backstroke|breaststroke|butterfly|kickboard|mixed|rest|null
+            stroke_count        INTEGER,
+            avg_heartrate       REAL,
+            is_rest             INTEGER DEFAULT 0,
+            FOREIGN KEY (activity_id) REFERENCES activities(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_swim_laps_activity
+            ON swim_laps(activity_id);
     """)
     conn.commit()
     _migrate_schema(conn)
@@ -285,6 +301,8 @@ def _migrate_schema(conn: sqlite3.Connection):
     migrations = [
         # 001 — track data source (strava | apple_health | manual)
         "ALTER TABLE activities ADD COLUMN source TEXT DEFAULT 'strava'",
+        # 002 — pool length for swim activities (meters)
+        "ALTER TABLE activities ADD COLUMN pool_length_meters REAL",
     ]
     for sql in migrations:
         try:

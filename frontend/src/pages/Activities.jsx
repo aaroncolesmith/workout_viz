@@ -43,13 +43,23 @@ export default function Activities() {
 
   return (
     <div>
-      <div className="section-header" style={{ marginBottom: 'var(--space-md)' }}>
-        <span className="section-title">
+      <div style={{ marginBottom: 'var(--space-lg)' }}>
+        <div style={{
+          fontSize: '11px', fontWeight: 700, letterSpacing: '0.1em',
+          textTransform: 'uppercase', color: 'var(--text-muted)',
+          marginBottom: 4,
+        }}>
           Activities
-          <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: '0.85rem', marginLeft: 8 }}>
-            {total.toLocaleString()} total
+        </div>
+        <div style={{
+          fontSize: '2rem', fontWeight: 800, letterSpacing: '-0.03em',
+          color: 'var(--text-primary)', lineHeight: 1.1,
+        }}>
+          {total.toLocaleString()}
+          <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-secondary)', marginLeft: 8 }}>
+            total
           </span>
-        </span>
+        </div>
       </div>
 
       {/* Type filter chips */}

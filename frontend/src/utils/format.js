@@ -94,26 +94,45 @@ export function activityIcon(type) {
 
 /** Get CSS class for activity type */
 export function activityClass(type) {
-  if (STRENGTH_TYPES.has(type)) return 'workout';
   const classes = {
     Run: 'run', VirtualRun: 'run', TrailRun: 'run',
     Ride: 'ride', VirtualRide: 'ride',
     Hike: 'hike', Walk: 'walk',
     Swim: 'swim',
+    HIIT: 'hiit',
   };
-  return classes[type] || '';
+  if (classes[type]) return classes[type];
+  if (STRENGTH_TYPES.has(type)) return 'workout';
+  return '';
 }
 
 /** Get color for activity type */
 export function activityColor(type) {
-  if (STRENGTH_TYPES.has(type)) return '#f472b6';
   const colors = {
-    Run: '#38bdf8', VirtualRun: '#38bdf8', TrailRun: '#38bdf8',
-    Ride: '#818cf8', VirtualRide: '#818cf8',
-    Hike: '#34d399', Walk: '#fbbf24',
+    Run: '#26c6f9', VirtualRun: '#26c6f9', TrailRun: '#26c6f9',
+    Ride: '#a78bfa', VirtualRide: '#a78bfa',
+    Hike: '#34d399',
+    Walk: '#f59e0b',
     Swim: '#22d3ee',
+    WeightTraining: '#f472b6',
+    Workout: '#c084fc',
+    FunctionalStrengthTraining: '#e879f9',
+    HIIT: '#fb923c',
+    CoreTraining: '#f472b6',
+    Yoga: '#a3e635',
+    Pilates: '#f472b6',
+    Dance: '#f472b6',
+    MindAndBody: '#f472b6',
+    Recovery: '#8a8a96',
+    Cooldown: '#8a8a96',
+    Crossfit: '#f87171',
+    Elliptical: '#8a8a96',
+    StairStepper: '#8a8a96',
+    Rowing: '#38bdf8',
+    AlpineSki: '#8a8a96',
+    NordicSki: '#8a8a96',
   };
-  return colors[type] || '#94a3b8';
+  return colors[type] || '#8a8a96';
 }
 
 /** Human-readable label for activity type */

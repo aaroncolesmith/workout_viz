@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { getActivity, getActivitySplits, getActivitySummary, getActivityFastestSegments, getSimilarActivities, getPcaData } from '../utils/api';
+import { getActivity, getActivitySplits, getActivitySummary, getActivityFastestSegments, getSimilarActivities, getPcaData, getSwimLaps } from '../utils/api';
 
-import { formatTime, isStrengthType } from '../utils/format';
+import { formatTime, isStrengthType, activityColor } from '../utils/format';
 import StrengthOverview from '../components/StrengthOverview';
 import RouteMap from '../components/RouteMap';
 import WorkoutRadar from '../components/WorkoutRadar';
@@ -15,6 +15,7 @@ import SplitHRChart from '../components/SplitHRChart';
 import FastestSegments from '../components/FastestSegments';
 import SimilarWorkoutsPanel from '../components/SimilarWorkoutsPanel';
 import InsightCard from '../components/InsightCard';
+import SwimLapChart from '../components/SwimLapChart';
 import { useComparisonState } from '../hooks/useComparisonState';
 import { useZoomState } from '../hooks/useZoomState';
 
@@ -25,12 +26,12 @@ const TABS = [
   { key: 'segments',  label: 'Segments'  },
 ];
 
-function TabBar({ activeTab, onSelect, visibleTabs }) {
+function TabBar({ activeTab, onSelect, visibleTabs, accentColor = '#26c6f9' }) {
   return (
     <div style={{
       display: 'flex',
       gap: 2,
-      borderBottom: '1px solid rgba(255,255,255,0.15)',
+      borderBottom: '1px solid #2a2a32',
       marginBottom: 'var(--space-xl)',
     }}>
       {TABS.filter(t => visibleTabs.has(t.key)).map(tab => {
@@ -42,16 +43,16 @@ function TabBar({ activeTab, onSelect, visibleTabs }) {
             style={{
               background: 'none',
               border: 'none',
-              borderBottom: active ? '2px solid #38bdf8' : '2px solid transparent',
-              color: active ? '#ffffff' : 'var(--text-muted)',
-              fontFamily: "'Inter', sans-serif",
-              fontWeight: active ? 600 : 400,
+              borderBottom: active ? `2px solid ${accentColor}` : '2px solid transparent',
+              color: active ? 'var(--text-primary)' : 'var(--text-muted)',
+              fontFamily: 'var(--font-body)',
+              fontWeight: active ? 700 : 500,
               fontSize: '0.85rem',
               padding: '10px 20px',
               cursor: 'pointer',
               transition: 'color 0.15s, border-color 0.15s',
               marginBottom: -1,
-              letterSpacing: active ? '0.01em' : '0',
+              letterSpacing: '0.01em',
             }}
           >
             {tab.label}
@@ -108,6 +109,12 @@ export default function ActivityDetail() {
         pcaData,
       };
     },
+  });
+
+  const swimQuery = useQuery({
+    queryKey: ['swim-laps', id],
+    enabled: Boolean(id) && detailQuery.data?.activity?.type === 'Swim',
+    queryFn: () => getSwimLaps(id),
   });
   const activity = detailQuery.data?.activity || null;
   const splits = detailQuery.data?.splits || [];
@@ -309,17 +316,23 @@ export default function ActivityDetail() {
   if (!isStrength) visibleTabs.add('splits');
   if (!isStrength && hasSegments) visibleTabs.add('segments');
 
+  const accentColor = activity ? activityColor(activity.type) : '#26c6f9';
+
   return (
     <div>
-      <button className="back-btn" onClick={() => navigate('/activities')}>
-        ← Back to Activities
+      <button
+        className="back-btn"
+        onClick={() => navigate('/activities')}
+        style={{ color: accentColor }}
+      >
+        ← Activities
       </button>
 
       {/* ── Header (always visible) ── */}
       <ActivityHeader activity={activity} />
 
       {/* ── Tab bar ── */}
-      <TabBar activeTab={activeTab} onSelect={setTab} visibleTabs={visibleTabs} />
+      <TabBar activeTab={activeTab} onSelect={setTab} visibleTabs={visibleTabs} accentColor={accentColor} />
 
       {/* ══════════════════════════════════════════════════════
           TAB: Overview — map + profile + progress timeline
@@ -331,15 +344,20 @@ export default function ActivityDetail() {
             <div style={{ marginBottom: 'var(--space-xl)' }}>
               <StrengthOverview activity={activity} />
             </div>
+          ) : activity.type === 'Swim' ? (
+            /* ── Swim overview: lap chart + radar ── */
+            <div>
+              <SwimLapChart swimData={swimQuery.data} />
+              <div className="glass-card" style={{ height: 380, display: 'flex', flexDirection: 'column', minWidth: 0, marginTop: 'var(--space-xl)' }}>
+                <div style={{ padding: '20px 20px 0 20px', fontWeight: 600, fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Activity Profile
+                </div>
+                <WorkoutRadar activities={[activity]} height={330} />
+              </div>
+            </div>
           ) : (
             /* ── GPS activity overview: map + radar ── */
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: activity.map_polyline ? 'minmax(0, 1fr) 350px' : '1fr',
-              gap: 'var(--space-xl)',
-              marginBottom: 'var(--space-xl)',
-              minWidth: 0,
-            }}>
+            <div className={`activity-overview-grid ${activity.map_polyline ? 'activity-overview-grid--map' : 'activity-overview-grid--no-map'}`}>
               {activity.map_polyline && (
                 <div className="glass-card" style={{ height: 400, padding: 0, overflow: 'hidden', minWidth: 0 }}>
                   <RouteMap
@@ -426,7 +444,7 @@ export default function ActivityDetail() {
       {activeTab === 'compare' && (
         <div>
           {/* Radar with comparison overlays */}
-          <div style={{ display: 'grid', gridTemplateColumns: '350px 1fr', gap: 'var(--space-xl)', marginBottom: 'var(--space-xl)', minWidth: 0 }}>
+          <div className="activity-compare-grid">
             <div className="glass-card" style={{ height: 400, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
               <div style={{ padding: '20px 20px 0 20px', fontWeight: 600, fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                 Activity Profile

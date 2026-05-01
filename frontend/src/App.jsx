@@ -12,7 +12,43 @@ import ErrorBoundary from './components/ErrorBoundary';
 
 const ADVANCED_ROUTES = ['/blocks', '/routes', '/similarity', '/settings'];
 
-function AdvancedMenu() {
+const ADVANCED_ITEMS = [
+  { to: '/blocks',     label: 'Blocks',     color: '#26c6f9' },
+  { to: '/routes',     label: 'Routes',     color: '#a78bfa' },
+  { to: '/similarity', label: 'Similarity', color: '#f472b6' },
+  { to: '/settings',   label: 'Settings',   color: '#f59e0b' },
+];
+
+function IconDashboard() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="3" y="3" width="7" height="7" rx="1.5" />
+      <rect x="14" y="3" width="7" height="7" rx="1.5" />
+      <rect x="3" y="14" width="7" height="7" rx="1.5" />
+      <rect x="14" y="14" width="7" height="7" rx="1.5" />
+    </svg>
+  );
+}
+
+function IconActivities() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <polyline points="2,12 6,7 9,13 13,5 17,15 20,10 22,12" />
+    </svg>
+  );
+}
+
+function IconAdvanced() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="3" y="12" width="4" height="9" rx="1" />
+      <rect x="10" y="7" width="4" height="14" rx="1" />
+      <rect x="17" y="3" width="4" height="18" rx="1" />
+    </svg>
+  );
+}
+
+function AdvancedTab() {
   const [open, setOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
@@ -29,76 +65,31 @@ function AdvancedMenu() {
   const go = (path) => { setOpen(false); navigate(path); };
 
   return (
-    <div ref={ref} style={{ position: 'relative', width: '100%' }}>
+    <div ref={ref} style={{ flex: 1, position: 'relative' }}>
       <button
+        className={`bottom-nav-tab ${isActive ? 'active' : ''}`}
+        style={{ width: '100%', height: '100%' }}
         onClick={() => setOpen(v => !v)}
-        className={isActive ? 'active' : ''}
-        style={{
-          width: '100%',
-          padding: 'var(--space-sm) var(--space-lg)',
-          fontFamily: 'var(--font-body)',
-          fontSize: '0.72rem',
-          fontWeight: 600,
-          letterSpacing: '0.08em',
-          textTransform: 'uppercase',
-          color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
-          background: 'transparent',
-          border: 'none',
-          borderBottom: `2px solid ${isActive ? '#34d399' : 'transparent'}`,
-          cursor: 'pointer',
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 4,
-        }}
+        aria-label="Advanced"
       >
-        Advanced
-        <span style={{ fontSize: '0.6rem', opacity: 0.7 }}>▼</span>
+        <IconAdvanced />
+        <span className="bottom-nav-label">Advanced</span>
       </button>
 
       {open && (
-        <div
-          style={{
-            position: 'absolute',
-            top: 'calc(100% + 4px)',
-            right: 0,
-            minWidth: 180,
-            background: 'rgba(28, 27, 27, 0.98)',
-            border: '1px solid rgba(255, 255, 255, 0.08)',
-            borderRadius: 8,
-            padding: 6,
-            boxShadow: '0 12px 32px rgba(0,0,0,0.4)',
-            backdropFilter: 'blur(20px)',
-            zIndex: 200,
-          }}
-        >
-          {[
-            { to: '/blocks', label: 'Blocks' },
-            { to: '/routes', label: 'Routes' },
-            { to: '/similarity', label: 'Similarity' },
-            { to: '/settings', label: 'Settings' },
-          ].map(item => {
+        <div className="bottom-nav-popup">
+          {ADVANCED_ITEMS.map(item => {
             const active = location.pathname.startsWith(item.to);
             return (
               <button
                 key={item.to}
+                className={`bottom-nav-popup-item ${active ? 'active' : ''}`}
                 onClick={() => go(item.to)}
-                style={{
-                  display: 'block',
-                  width: '100%',
-                  textAlign: 'left',
-                  padding: '8px 12px',
-                  fontFamily: 'var(--font-body)',
-                  fontSize: '0.75rem',
-                  fontWeight: 600,
-                  letterSpacing: '0.04em',
-                  color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
-                  background: active ? 'rgba(255,255,255,0.05)' : 'transparent',
-                  border: 'none',
-                  borderRadius: 4,
-                  cursor: 'pointer',
-                }}
               >
+                <span
+                  className="bottom-nav-popup-dot"
+                  style={{ background: item.color }}
+                />
                 {item.label}
               </button>
             );
@@ -109,22 +100,35 @@ function AdvancedMenu() {
   );
 }
 
+function BottomNav() {
+  return (
+    <nav className="bottom-nav">
+      <NavLink
+        to="/"
+        end
+        className={({ isActive }) => `bottom-nav-tab ${isActive ? 'active' : ''}`}
+        aria-label="Dashboard"
+      >
+        <IconDashboard />
+        <span className="bottom-nav-label">Dashboard</span>
+      </NavLink>
+      <NavLink
+        to="/activities"
+        className={({ isActive }) => `bottom-nav-tab ${isActive ? 'active' : ''}`}
+        aria-label="Activities"
+      >
+        <IconActivities />
+        <span className="bottom-nav-label">Activities</span>
+      </NavLink>
+      <AdvancedTab />
+    </nav>
+  );
+}
+
 export default function App() {
   return (
     <BrowserRouter>
       <div className="app-layout">
-        <header className="app-header">
-          <nav className="app-nav">
-            <NavLink to="/" end className={({ isActive }) => isActive ? 'active' : ''}>
-              Dashboard
-            </NavLink>
-            <NavLink to="/activities" className={({ isActive }) => isActive ? 'active' : ''}>
-              Activities
-            </NavLink>
-            <AdvancedMenu />
-          </nav>
-        </header>
-
         <main className="page-container">
           <Routes>
             <Route path="/" element={
@@ -165,6 +169,7 @@ export default function App() {
             <Route path="/auth/callback" element={<AuthCallback />} />
           </Routes>
         </main>
+        <BottomNav />
       </div>
     </BrowserRouter>
   );

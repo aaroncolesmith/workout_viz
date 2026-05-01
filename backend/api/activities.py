@@ -5,6 +5,7 @@ Implements Epic 1.4 endpoints.
 from fastapi import APIRouter, Query, HTTPException
 from typing import Optional
 
+from backend.services.database import get_conn
 from backend.services.data_service import get_data_service
 from backend.services.similarity_service import find_similar_activities
 from backend.services.pca_service import get_activity_pca
@@ -166,6 +167,62 @@ def get_activity_splits(activity_id: int):
     data = get_data_service()
     splits = data.get_splits(activity_id)
     return {"splits": splits, "count": len(splits)}
+
+
+@router.get("/activities/{activity_id}/swim-laps")
+def get_swim_laps(activity_id: int):
+    """Per-lap breakdown for pool swim activities."""
+    conn = get_conn()
+    activity = conn.execute(
+        "SELECT pool_length_meters, distance_miles, moving_time_min FROM activities WHERE id = ?",
+        (activity_id,)
+    ).fetchone()
+    if not activity:
+        raise HTTPException(status_code=404, detail="Activity not found")
+
+    rows = conn.execute(
+        """SELECT lap_number, distance_meters, duration_seconds,
+                  stroke_type, stroke_count, avg_heartrate, is_rest
+             FROM swim_laps
+            WHERE activity_id = ?
+            ORDER BY lap_number""",
+        (activity_id,)
+    ).fetchall()
+
+    pool_m = activity["pool_length_meters"]
+    laps = []
+    for r in rows:
+        dur = r["duration_seconds"]
+        dist = r["distance_meters"] or pool_m
+        pace_per_100 = (dur / dist * 100) if dist and dist > 0 else None
+        laps.append({
+            "lap_number":      r["lap_number"],
+            "distance_meters": dist,
+            "duration_seconds": dur,
+            "stroke_type":     r["stroke_type"],
+            "stroke_count":    r["stroke_count"],
+            "avg_heartrate":   r["avg_heartrate"],
+            "is_rest":         bool(r["is_rest"]),
+            "pace_per_100":    round(pace_per_100, 1) if pace_per_100 else None,
+        })
+
+    active_laps = [l for l in laps if not l["is_rest"]]
+    avg_pace = (
+        sum(l["pace_per_100"] for l in active_laps if l["pace_per_100"]) / len(active_laps)
+        if active_laps else None
+    )
+    best_pace = (
+        min((l["pace_per_100"] for l in active_laps if l["pace_per_100"]), default=None)
+    )
+
+    return {
+        "laps":              laps,
+        "pool_length_meters": pool_m,
+        "avg_pace_per_100":  round(avg_pace, 1) if avg_pace else None,
+        "best_pace_per_100": round(best_pace, 1) if best_pace else None,
+        "lap_count":         len(laps),
+        "active_lap_count":  len(active_laps),
+    }
 
 
 @router.post("/activities/{activity_id}/sync_details", response_model=schemas.SyncStartResponse)

@@ -38,6 +38,16 @@ from backend.services.database import get_conn
 
 logger = logging.getLogger(__name__)
 
+# ── HKSwimmingStrokeStyle int → name ─────────────────────────────────────
+_STROKE_STYLE = {
+    '0': 'mixed',
+    '1': 'freestyle',
+    '2': 'backstroke',
+    '3': 'breaststroke',
+    '4': 'butterfly',
+    '5': 'kickboard',
+}
+
 # ── HKWorkoutActivityType → our activity type strings ──────────────────────
 ACTIVITY_TYPE_MAP: dict[str, str] = {
     'HKWorkoutActivityTypeRunning':                    'Run',
@@ -181,6 +191,50 @@ def _parse_workouts(xml_bytes: bytes) -> list:
         start_iso = start_dt.isoformat()
         start_local = start_dt.strftime('%Y-%m-%dT%H:%M:%S')
 
+        # ── Swim-specific metadata + lap events ──────────────────────────
+        pool_length_m: Optional[float] = None
+        swim_laps: list = []
+        if activity_type == 'Swim':
+            for meta in elem.findall('MetadataEntry'):
+                if meta.get('key') == 'HKSwimmingPoolLength':
+                    try:
+                        raw = float(meta.get('value', 0))
+                        unit = meta.get('unit', 'm')
+                        pool_length_m = raw * 0.9144 if unit == 'yd' else raw
+                    except (ValueError, TypeError):
+                        pass
+
+            lap_num = 0
+            for ev in elem.findall('WorkoutEvent'):
+                if ev.get('type') != 'HKWorkoutEventTypeLap':
+                    continue
+                try:
+                    dur = float(ev.get('durationInSeconds') or 0)
+                except (ValueError, TypeError):
+                    continue
+                if dur <= 0:
+                    continue
+                lap_num += 1
+                stroke_raw = None
+                stroke_count = None
+                for lm in ev.findall('MetadataEntry'):
+                    k = lm.get('key', '')
+                    if k == 'HKSwimmingStrokeStyle':
+                        stroke_raw = _STROKE_STYLE.get(lm.get('value', ''))
+                    elif k == 'HKSwimmingStrokeCount':
+                        try:
+                            stroke_count = int(float(lm.get('value', 0)))
+                        except (ValueError, TypeError):
+                            pass
+                swim_laps.append({
+                    'lap_number':      lap_num,
+                    'distance_meters': pool_length_m,
+                    'duration_seconds': dur,
+                    'stroke_type':     stroke_raw,
+                    'stroke_count':    stroke_count,
+                    'is_rest':         0,
+                })
+
         workouts.append({
             'id':               _ah_id(activity_type, start_iso),
             'type':             activity_type,
@@ -199,6 +253,8 @@ def _parse_workouts(xml_bytes: bytes) -> list:
             'hr_sum':           0.0,
             'hr_count':         0,
             'hr_max':           0.0,
+            'pool_length_m':    pool_length_m,
+            'swim_laps':        swim_laps,
         })
         root.clear()
 
@@ -298,7 +354,8 @@ def _insert_workouts(workouts: list) -> tuple[int, int, int]:
                     average_heartrate, max_heartrate, has_heartrate,
                     total_elevation_gain,
                     pace,
-                    source
+                    source,
+                    pool_length_meters
                 ) VALUES (
                     ?, ?, ?, ?,
                     ?, ?, ?,
@@ -310,7 +367,7 @@ def _insert_workouts(workouts: list) -> tuple[int, int, int]:
                     ?, ?, ?,
                     ?,
                     ?,
-                    ?
+                    ?, ?
                 )
             """, (
                 w['id'], w['name'], w['type'], w['sport_type'],
@@ -324,7 +381,22 @@ def _insert_workouts(workouts: list) -> tuple[int, int, int]:
                 0.0,
                 round(pace, 4) if pace else None,
                 'apple_health',
+                round(w.get('pool_length_m'), 2) if w.get('pool_length_m') else None,
             ))
+
+            # Insert swim laps if present
+            for lap in w.get('swim_laps', []):
+                conn.execute("""
+                    INSERT INTO swim_laps
+                        (activity_id, lap_number, distance_meters, duration_seconds,
+                         stroke_type, stroke_count, is_rest)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    w['id'], lap['lap_number'], lap['distance_meters'],
+                    lap['duration_seconds'], lap['stroke_type'],
+                    lap['stroke_count'], lap['is_rest'],
+                ))
+
             conn.commit()
             added += 1
 

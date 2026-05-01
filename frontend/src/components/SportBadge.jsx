@@ -29,7 +29,7 @@ export default function SportBadge({ type, size = 36 }) {
       justifyContent: 'center',
       flexShrink: 0,
       color,
-      fontFamily: "'Manrope', sans-serif",
+      fontFamily: "var(--font-display)",
       fontWeight: 800,
       fontSize: Math.round(size * 0.28),
       letterSpacing: '-0.02em',

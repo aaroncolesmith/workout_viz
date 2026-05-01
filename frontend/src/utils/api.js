@@ -43,6 +43,10 @@ export async function getActivityFastestSegments(id) {
   return fetchJSON(`${BASE}/activities/${id}/fastest_segments`);
 }
 
+export async function getSwimLaps(id) {
+  return fetchJSON(`${BASE}/activities/${id}/swim-laps`);
+}
+
 export async function getSimilarActivities(id, topN = 5) {
   return fetchJSON(`${BASE}/activities/${id}/similar?top_n=${topN}`);
 }
