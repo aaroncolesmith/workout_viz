@@ -39,13 +39,16 @@ from backend.services.database import get_conn
 logger = logging.getLogger(__name__)
 
 # ── HKSwimmingStrokeStyle int → name ─────────────────────────────────────
+# Apple's enum: 0=unknown, 1=mixed, 2=freestyle, 3=backstroke,
+#               4=breaststroke, 5=butterfly, 6=kickboard
 _STROKE_STYLE = {
-    '0': 'mixed',
-    '1': 'freestyle',
-    '2': 'backstroke',
-    '3': 'breaststroke',
-    '4': 'butterfly',
-    '5': 'kickboard',
+    '0': None,            # HKSwimmingStrokeStyleUnknown
+    '1': 'mixed',
+    '2': 'freestyle',
+    '3': 'backstroke',
+    '4': 'breaststroke',
+    '5': 'butterfly',
+    '6': 'kickboard',
 }
 
 # ── HKWorkoutActivityType → our activity type strings ──────────────────────

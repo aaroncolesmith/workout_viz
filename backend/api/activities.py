@@ -169,6 +169,64 @@ def get_activity_splits(activity_id: int):
     return {"splits": splits, "count": len(splits)}
 
 
+def _compute_swim_best_sets(laps: list, pool_length_meters: float) -> dict:
+    """
+    Compute fastest wall-time segments at standard distances.
+    Wall time = active lap durations + any rest intervals between them.
+    """
+    if not pool_length_meters or pool_length_meters <= 0:
+        return {}
+    active_laps = [l for l in laps if not l["is_rest"]]
+    if not active_laps:
+        return {}
+
+    # Detect yards (25yd ≈ 22.86m, 50yd ≈ 45.72m) vs metres
+    remainder = pool_length_meters % 22.86
+    is_yards = remainder < 1.0
+    if is_yards:
+        pool_unit = round(pool_length_meters / 0.9144)  # e.g. 25
+        unit = 'yd'
+        targets = [
+            ('fastest_lap',  f'{pool_unit}yd', 1),
+            ('fastest_50',   '50yd',           max(1, round(50  / pool_unit))),
+            ('fastest_500',  '500yd',          max(1, round(500  / pool_unit))),
+            ('fastest_1000', '1000yd',         max(1, round(1000 / pool_unit))),
+        ]
+    else:
+        pool_unit = round(pool_length_meters)  # e.g. 25 or 50
+        unit = 'm'
+        targets = [
+            ('fastest_lap',  f'{pool_unit}m', 1),
+            ('fastest_50',   '50m',           max(1, round(50  / pool_unit))),
+            ('fastest_500',  '500m',          max(1, round(500  / pool_unit))),
+            ('fastest_1000', '1000m',         max(1, round(1000 / pool_unit))),
+        ]
+
+    results = {}
+    for key, label, n_active in targets:
+        if n_active > len(active_laps):
+            continue
+        best = None
+        for i in range(len(active_laps) - n_active + 1):
+            start_num = active_laps[i]["lap_number"]
+            end_num   = active_laps[i + n_active - 1]["lap_number"]
+            wall_time = sum(
+                l["duration_seconds"] for l in laps
+                if start_num <= l["lap_number"] <= end_num
+            )
+            if best is None or wall_time < best["time_seconds"]:
+                best = {
+                    "time_seconds": round(wall_time, 1),
+                    "start_lap": start_num,
+                    "end_lap":   end_num,
+                    "n_laps":    n_active,
+                    "label":     label,
+                }
+        if best:
+            results[key] = best
+    return results
+
+
 @router.get("/activities/{activity_id}/swim-laps")
 def get_swim_laps(activity_id: int):
     """Per-lap breakdown for pool swim activities."""
@@ -215,6 +273,7 @@ def get_swim_laps(activity_id: int):
         min((l["pace_per_100"] for l in active_laps if l["pace_per_100"]), default=None)
     )
 
+    best_sets = _compute_swim_best_sets(laps, pool_m)
     return {
         "laps":              laps,
         "pool_length_meters": pool_m,
@@ -222,6 +281,7 @@ def get_swim_laps(activity_id: int):
         "best_pace_per_100": round(best_pace, 1) if best_pace else None,
         "lap_count":         len(laps),
         "active_lap_count":  len(active_laps),
+        "best_sets":         best_sets,
     }
 
 

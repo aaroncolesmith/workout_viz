@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { getActivity, getActivitySplits, getActivitySummary, getActivityFastestSegments, getSimilarActivities, getPcaData, getSwimLaps } from '../utils/api';
+import { getActivity, getActivitySplits, getActivitySummary, getActivityFastestSegments, getSimilarActivities, getPcaData, getSwimLaps, getActivities } from '../utils/api';
 
 import { formatTime, isStrengthType, activityColor } from '../utils/format';
 import StrengthOverview from '../components/StrengthOverview';
@@ -116,6 +116,25 @@ export default function ActivityDetail() {
     enabled: Boolean(id) && detailQuery.data?.activity?.type === 'Swim',
     queryFn: () => getSwimLaps(id),
   });
+
+  const [compareSwimId, setCompareSwimId] = useState(null);
+  const swimActivitiesQuery = useQuery({
+    queryKey: ['swim-activities'],
+    enabled: detailQuery.data?.activity?.type === 'Swim',
+    queryFn: () => getActivities({ type: 'Swim', limit: 50 }),
+    staleTime: 5 * 60 * 1000,
+  });
+  const compareSwimQuery = useQuery({
+    queryKey: ['swim-laps', compareSwimId],
+    enabled: Boolean(compareSwimId),
+    queryFn: () => getSwimLaps(compareSwimId),
+  });
+  // Swim activities excluding the current one, sorted newest first
+  const otherSwims = useMemo(() => {
+    const acts = swimActivitiesQuery.data?.activities || [];
+    return acts.filter(a => String(a.id) !== String(id));
+  }, [swimActivitiesQuery.data, id]);
+
   const activity = detailQuery.data?.activity || null;
   const splits = detailQuery.data?.splits || [];
   const similar = detailQuery.data?.similar || [];
@@ -347,7 +366,13 @@ export default function ActivityDetail() {
           ) : activity.type === 'Swim' ? (
             /* ── Swim overview: lap chart + radar ── */
             <div>
-              <SwimLapChart swimData={swimQuery.data} />
+              <SwimLapChart
+                swimData={swimQuery.data}
+                compareSwimData={compareSwimQuery.data}
+                swimActivities={otherSwims}
+                compareId={compareSwimId}
+                onSelectCompare={setCompareSwimId}
+              />
               <div className="glass-card" style={{ height: 380, display: 'flex', flexDirection: 'column', minWidth: 0, marginTop: 'var(--space-xl)' }}>
                 <div style={{ padding: '20px 20px 0 20px', fontWeight: 600, fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                   Activity Profile

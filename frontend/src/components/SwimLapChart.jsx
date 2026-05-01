@@ -5,14 +5,14 @@ import {
 } from 'recharts';
 
 const STROKE_COLORS = {
-  freestyle:    '#38bdf8',
+  freestyle:    '#26c6f9',
   backstroke:   '#a78bfa',
   breaststroke: '#4ade80',
   butterfly:    '#facc15',
   kickboard:    '#fb923c',
   mixed:        '#94a3b8',
-  rest:         '#334155',
-  unknown:      '#64748b',
+  rest:         '#2a2a32',
+  unknown:      '#4a4a56',
 };
 
 const STROKE_LABELS = {
@@ -25,11 +25,22 @@ const STROKE_LABELS = {
   rest:         'Rest',
 };
 
-function fmtPace(seconds) {
+function fmtTime(seconds) {
   if (!seconds) return '—';
   const m = Math.floor(seconds / 60);
   const s = Math.round(seconds % 60);
   return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function fmtDelta(currentSec, compareSec) {
+  if (!currentSec || !compareSec) return null;
+  const diff = currentSec - compareSec;
+  if (Math.abs(diff) < 0.5) return { text: '—', color: 'var(--text-muted)' };
+  const sign = diff < 0 ? '−' : '+';
+  return {
+    text: `${sign}${fmtTime(Math.abs(diff))}`,
+    color: diff < 0 ? '#4ade80' : '#f87171',
+  };
 }
 
 function CustomTooltip({ active, payload }) {
@@ -38,14 +49,14 @@ function CustomTooltip({ active, payload }) {
   const unit = d.unit || 'm';
   return (
     <div style={{
-      background: '#1e293b',
-      border: '1px solid rgba(255,255,255,0.12)',
+      background: '#18181c',
+      border: '1px solid #2a2a32',
       borderRadius: 8,
       padding: '10px 14px',
       fontSize: '0.78rem',
       lineHeight: 1.7,
     }}>
-      <div style={{ fontWeight: 700, marginBottom: 4, color: '#f1f5f9' }}>
+      <div style={{ fontWeight: 700, marginBottom: 4, color: 'var(--text-primary)' }}>
         {d.is_rest ? 'Rest' : `Lap ${d.lap_number}`}
       </div>
       {!d.is_rest && (
@@ -54,41 +65,126 @@ function CustomTooltip({ active, payload }) {
             {STROKE_LABELS[d.stroke_type] || 'Unknown stroke'}
           </div>
           <div style={{ color: 'var(--text-muted)' }}>
-            Pace: <span style={{ color: '#f1f5f9' }}>{fmtPace(d.pace_per_100)}/{unit === 'yd' ? '100yd' : '100m'}</span>
+            Pace: <span style={{ color: 'var(--text-primary)' }}>{fmtTime(d.pace_per_100)}/{unit === 'yd' ? '100yd' : '100m'}</span>
           </div>
           {d.duration_seconds != null && (
             <div style={{ color: 'var(--text-muted)' }}>
-              Duration: <span style={{ color: '#f1f5f9' }}>{fmtPace(d.duration_seconds)}</span>
+              Split: <span style={{ color: 'var(--text-primary)' }}>{fmtTime(d.duration_seconds)}</span>
             </div>
           )}
           {d.stroke_count > 0 && (
             <div style={{ color: 'var(--text-muted)' }}>
-              Strokes: <span style={{ color: '#f1f5f9' }}>{d.stroke_count}</span>
+              Strokes: <span style={{ color: 'var(--text-primary)' }}>{d.stroke_count}</span>
             </div>
           )}
           {d.avg_heartrate > 0 && (
             <div style={{ color: 'var(--text-muted)' }}>
-              Avg HR: <span style={{ color: '#f472b6' }}>{Math.round(d.avg_heartrate)} bpm</span>
+              HR: <span style={{ color: '#f472b6' }}>{Math.round(d.avg_heartrate)} bpm</span>
             </div>
           )}
         </>
       )}
       {d.is_rest && (
-        <div style={{ color: 'var(--text-muted)' }}>
-          {fmtPace(d.duration_seconds)}
-        </div>
+        <div style={{ color: 'var(--text-muted)' }}>{fmtTime(d.duration_seconds)}</div>
       )}
     </div>
   );
 }
 
-export default function SwimLapChart({ swimData }) {
-  const { laps = [], pool_length_meters, avg_pace_per_100, best_pace_per_100 } = swimData || {};
+const BEST_SET_KEYS = ['fastest_lap', 'fastest_50', 'fastest_500', 'fastest_1000'];
+const BEST_SET_ICONS = { fastest_lap: '◈', fastest_50: '⇅', fastest_500: '▶▶', fastest_1000: '⬛' };
+
+function BestSets({ bestSets, compareBestSets, swimActivities, compareId, onSelectCompare }) {
+  const hasSets = bestSets && Object.keys(bestSets).length > 0;
+  if (!hasSets) return null;
+
+  return (
+    <div style={{ marginTop: 'var(--space-xl)' }}>
+      {/* Section header with compare picker */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+        <span style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)' }}>
+          Best Sets
+        </span>
+        {swimActivities && swimActivities.length > 0 && (
+          <select
+            value={compareId || ''}
+            onChange={e => onSelectCompare(e.target.value ? Number(e.target.value) : null)}
+            style={{
+              background: '#18181c',
+              border: '1px solid #2a2a32',
+              borderRadius: 8,
+              color: compareId ? '#26c6f9' : 'var(--text-muted)',
+              fontSize: '0.72rem',
+              padding: '4px 8px',
+              cursor: 'pointer',
+              outline: 'none',
+              maxWidth: 200,
+            }}
+          >
+            <option value="">Compare with…</option>
+            {swimActivities.map(s => (
+              <option key={s.id} value={s.id}>{s.date} — {s.distance_miles != null ? `${(s.distance_miles * 1760).toFixed(0)}yd` : ''}</option>
+            ))}
+          </select>
+        )}
+      </div>
+
+      {/* Column headers when comparing */}
+      {compareBestSets && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 4, marginBottom: 6 }}>
+          <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', gridColumn: '2' }}>This swim</div>
+          <div style={{ fontSize: '0.68rem', color: '#a78bfa', gridColumn: '3' }}>Previous</div>
+          <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', gridColumn: '4' }}>Delta</div>
+        </div>
+      )}
+
+      {/* Rows */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+        {BEST_SET_KEYS.map(key => {
+          const cur = bestSets[key];
+          if (!cur) return null;
+          const cmp = compareBestSets?.[key];
+          const delta = fmtDelta(cur.time_seconds, cmp?.time_seconds);
+
+          return (
+            <div key={key} style={{
+              display: 'grid',
+              gridTemplateColumns: compareBestSets ? '1fr 1fr 1fr 1fr' : '1fr 1fr',
+              alignItems: 'center',
+              padding: '8px 0',
+              borderBottom: '1px solid #18181c',
+            }}>
+              <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ color: '#26c6f9', fontSize: '0.65rem' }}>{BEST_SET_ICONS[key]}</span>
+                {cur.label}
+              </div>
+              <div style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
+                {fmtTime(cur.time_seconds)}
+              </div>
+              {compareBestSets && (
+                <div style={{ fontSize: '0.9rem', fontWeight: 600, color: '#a78bfa', fontVariantNumeric: 'tabular-nums' }}>
+                  {cmp ? fmtTime(cmp.time_seconds) : '—'}
+                </div>
+              )}
+              {compareBestSets && delta && (
+                <div style={{ fontSize: '0.8rem', fontWeight: 600, color: delta.color, fontVariantNumeric: 'tabular-nums' }}>
+                  {delta.text}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+export default function SwimLapChart({ swimData, compareSwimData, swimActivities, compareId, onSelectCompare }) {
+  const { laps = [], pool_length_meters, avg_pace_per_100, best_pace_per_100, best_sets } = swimData || {};
 
   // Determine display unit based on pool length
   const unit = useMemo(() => {
     if (!pool_length_meters) return 'm';
-    // 25yd ≈ 22.86m, 50yd ≈ 45.72m
     const remainder = pool_length_meters % 22.86;
     return remainder < 1 ? 'yd' : 'm';
   }, [pool_length_meters]);
@@ -99,13 +195,11 @@ export default function SwimLapChart({ swimData }) {
     return `${Math.round(pool_length_meters)}m`;
   }, [pool_length_meters, unit]);
 
-  // Inject unit into each lap for the tooltip
   const chartData = useMemo(() =>
     laps.map(l => ({ ...l, unit })),
     [laps, unit]
   );
 
-  // Legend: unique stroke types present
   const strokeTypes = useMemo(() => {
     const seen = new Set();
     laps.forEach(l => {
@@ -122,7 +216,6 @@ export default function SwimLapChart({ swimData }) {
     );
   }
 
-  // Y-axis domain: add some headroom above the slowest pace
   const maxPace = Math.max(...laps.filter(l => l.pace_per_100).map(l => l.pace_per_100));
   const yMax = Math.ceil(maxPace * 1.15 / 10) * 10;
 
@@ -133,23 +226,15 @@ export default function SwimLapChart({ swimData }) {
         <div>
           <span className="section-title">Swim Laps</span>
           {poolDisplay && (
-            <span className="section-subtitle">{poolDisplay} pool · {laps.length} laps</span>
+            <span className="section-subtitle">{poolDisplay} pool · {laps.filter(l => !l.is_rest).length} laps</span>
           )}
         </div>
         <div style={{ display: 'flex', gap: 16, fontSize: '0.75rem', color: 'var(--text-muted)', alignItems: 'center', flexWrap: 'wrap' }}>
           {avg_pace_per_100 && (
-            <span>
-              Avg <span style={{ color: '#38bdf8', fontWeight: 600 }}>
-                {fmtPace(avg_pace_per_100)}/{unit === 'yd' ? '100yd' : '100m'}
-              </span>
-            </span>
+            <span>Avg <span style={{ color: '#26c6f9', fontWeight: 600 }}>{fmtTime(avg_pace_per_100)}/{unit === 'yd' ? '100yd' : '100m'}</span></span>
           )}
           {best_pace_per_100 && (
-            <span>
-              Best <span style={{ color: '#4ade80', fontWeight: 600 }}>
-                {fmtPace(best_pace_per_100)}/{unit === 'yd' ? '100yd' : '100m'}
-              </span>
-            </span>
+            <span>Best <span style={{ color: '#4ade80', fontWeight: 600 }}>{fmtTime(best_pace_per_100)}/{unit === 'yd' ? '100yd' : '100m'}</span></span>
           )}
         </div>
       </div>
@@ -169,7 +254,7 @@ export default function SwimLapChart({ swimData }) {
       {/* Chart */}
       <ResponsiveContainer width="100%" height={240}>
         <BarChart data={chartData} margin={{ top: 4, right: 4, left: -16, bottom: 0 }} barCategoryGap="20%">
-          <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.05)" />
+          <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.04)" />
           <XAxis
             dataKey="lap_number"
             tick={{ fill: 'var(--text-muted)', fontSize: 10 }}
@@ -178,19 +263,19 @@ export default function SwimLapChart({ swimData }) {
           />
           <YAxis
             domain={[0, yMax]}
-            tickFormatter={v => v === 0 ? '' : fmtPace(v)}
+            tickFormatter={v => v === 0 ? '' : fmtTime(v)}
             tick={{ fill: 'var(--text-muted)', fontSize: 10 }}
             tickLine={false}
             axisLine={false}
             width={38}
           />
-          <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
+          <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255,255,255,0.03)' }} />
           {avg_pace_per_100 && (
             <ReferenceLine
               y={avg_pace_per_100}
-              stroke="#38bdf8"
+              stroke="#26c6f9"
               strokeDasharray="4 3"
-              strokeOpacity={0.6}
+              strokeOpacity={0.5}
               strokeWidth={1}
             />
           )}
@@ -198,17 +283,22 @@ export default function SwimLapChart({ swimData }) {
             {chartData.map((entry, i) => (
               <Cell
                 key={i}
-                fill={
-                  entry.is_rest
-                    ? STROKE_COLORS.rest
-                    : (STROKE_COLORS[entry.stroke_type] || STROKE_COLORS.unknown)
-                }
-                fillOpacity={entry.is_rest ? 0.4 : 0.85}
+                fill={entry.is_rest ? STROKE_COLORS.rest : (STROKE_COLORS[entry.stroke_type] || STROKE_COLORS.unknown)}
+                fillOpacity={entry.is_rest ? 0.3 : 0.85}
               />
             ))}
           </Bar>
         </BarChart>
       </ResponsiveContainer>
+
+      {/* Best Sets */}
+      <BestSets
+        bestSets={best_sets}
+        compareBestSets={compareSwimData?.best_sets}
+        swimActivities={swimActivities}
+        compareId={compareId}
+        onSelectCompare={onSelectCompare}
+      />
     </div>
   );
 }

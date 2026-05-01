@@ -314,6 +314,7 @@ def _migrate_schema(conn: sqlite3.Connection):
     _migrate_apple_health_ids(conn)
     _dedupe_apple_health_activities(conn)
     _backfill_extended_pr_distances(conn)
+    _migrate_swim_stroke_correction(conn)
 
 
 # JS Number.MAX_SAFE_INTEGER = 2^53 - 1 = 9,007,199,254,740,991
@@ -493,3 +494,46 @@ def _run_extended_pr_backfill():
         logger.info(f"Extended PR backfill complete: {done} ok, {failed} failed")
     except Exception:
         logger.exception("Extended PR backfill crashed")
+
+
+def _migrate_swim_stroke_correction(conn: sqlite3.Connection):
+    """
+    Correct swim stroke types that were stored with an off-by-one mapping.
+    Apple's HKSwimmingStrokeStyle enum starts at 0=unknown, 1=mixed, 2=freestyle, ...
+    The original code mapped 0→mixed, 1→freestyle, 2→backstroke, etc. (one step too early).
+    Uses two-pass rename to avoid overwriting values mid-migration.
+    """
+    done = conn.execute(
+        "SELECT value FROM user_settings WHERE key = 'migration_stroke_fix_v1'"
+    ).fetchone()
+    if done:
+        return
+
+    conn.execute("""
+        UPDATE swim_laps SET stroke_type = CASE stroke_type
+          WHEN 'mixed'        THEN '_m_'
+          WHEN 'freestyle'    THEN '_f_'
+          WHEN 'backstroke'   THEN '_b_'
+          WHEN 'breaststroke' THEN '_br_'
+          WHEN 'butterfly'    THEN '_bu_'
+          WHEN 'kickboard'    THEN '_k_'
+          ELSE stroke_type
+        END
+    """)
+    conn.execute("""
+        UPDATE swim_laps SET stroke_type = CASE stroke_type
+          WHEN '_m_'  THEN NULL
+          WHEN '_f_'  THEN 'mixed'
+          WHEN '_b_'  THEN 'freestyle'
+          WHEN '_br_' THEN 'backstroke'
+          WHEN '_bu_' THEN 'breaststroke'
+          WHEN '_k_'  THEN 'butterfly'
+          ELSE stroke_type
+        END
+    """)
+    conn.execute(
+        "INSERT OR REPLACE INTO user_settings (key, value, updated_at) "
+        "VALUES ('migration_stroke_fix_v1', 'done', CURRENT_TIMESTAMP)"
+    )
+    conn.commit()
+    logger.info("Applied swim stroke style correction (off-by-one fix)")
