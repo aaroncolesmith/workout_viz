@@ -55,18 +55,27 @@ async def log_errors(request, call_next):
 
 
 # ── Startup: init DB and warm up DataService ───────────────────────────────────
+def _init_services():
+    """
+    Heavy startup work: schema migrations + DataService warm-up.
+    Runs in a daemon thread so uvicorn can start accepting requests
+    (and pass Railway's healthcheck) before this completes.
+    """
+    try:
+        from backend.services.data_service import get_data_service, DB_PATH
+        from backend.services.database import init_db
+        init_db(DB_PATH)
+        svc = get_data_service()
+        stats = svc.get_cache_stats()
+        logger.info(f"Startup complete — cache initialised: {stats}")
+    except Exception:
+        logger.exception("Background startup init failed")
+
+
 @app.on_event("startup")
 def on_startup():
-    """
-    Eagerly initialise the database and DataService singleton on startup.
-    This means the first API request doesn't pay the init cost.
-    """
-    from backend.services.data_service import get_data_service, DB_PATH
-    from backend.services.database import init_db
-    init_db(DB_PATH)
-    svc = get_data_service()
-    stats = svc.get_cache_stats()
-    logger.info(f"Startup complete — cache initialised: {stats}")
+    import threading
+    threading.Thread(target=_init_services, name="startup-init", daemon=True).start()
 
 
 # ── Route modules ──────────────────────────────────────────────────────────────
