@@ -68,30 +68,6 @@ export function isStrengthType(type) { return STRENGTH_TYPES.has(type); }
 export function isGpsType(type)      { return GPS_TYPES.has(type) || !STRENGTH_TYPES.has(type); }
 export function isSwimType(type)     { return SWIM_TYPES.has(type); }
 
-/** Get icon character for activity type (text icons — no emoji for premium feel) */
-export function activityIcon(type) {
-  const icons = {
-    Run: '🏃', VirtualRun: '🏃', TrailRun: '🏔',
-    Ride: '🚴', VirtualRide: '🚴',
-    Hike: '🥾', Walk: '🚶',
-    Swim: '🏊',
-    WeightTraining: '🏋️',
-    Workout: '💪', FunctionalStrengthTraining: '💪',
-    HIIT: '⚡',
-    CoreTraining: '🎯',
-    Yoga: '🧘', Pilates: '🧘',
-    MindAndBody: '🧘',
-    Crossfit: '🔥',
-    Elliptical: '〇',
-    StairStepper: '📶',
-    Rowing: '🚣',
-    Recovery: '💆',
-    AlpineSki: '⛷️', NordicSki: '⛷️',
-    Soccer: '⚽',
-  };
-  return icons[type] || '🏃';
-}
-
 /** Get CSS class for activity type */
 export function activityClass(type) {
   const classes = {
@@ -162,13 +138,13 @@ export function parseLocalDate(dateStr) {
   return new Date(dateStr);
 }
 
-/** Format date string nicely */
+/** Format date string as M/D/YY (e.g. 7/9/26) — humans don't read ISO dates */
 export function formatDate(dateStr) {
   if (!dateStr) return '';
   const d = parseLocalDate(dateStr);
   if (isNaN(d)) return dateStr;
   return d.toLocaleDateString('en-US', {
-    month: 'short', day: 'numeric', year: 'numeric'
+    month: 'numeric', day: 'numeric', year: '2-digit'
   });
 }
 
@@ -261,11 +237,13 @@ export function formatRelativeTo(dateStr, referenceDateStr) {
   return `${yrs}yr ${dir}`;
 }
 
-/** Format activity name with date to avoid duplicates */
+/** Format activity name with date, stripping a date HealthKit may have
+ *  already baked into the name (e.g. "Run — 7/9/26") so it isn't doubled. */
 export function formatActivityName(act) {
   if (!act) return '';
   const d = parseLocalDate(act.date);
   const dateStr = d.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: '2-digit' });
-  return `${act.name} - ${dateStr}`;
+  const baseName = (act.name || '').replace(/\s*[-—]\s*\d{1,2}\/\d{1,2}\/\d{2,4}\s*$/, '');
+  return `${baseName} - ${dateStr}`;
 }
 

@@ -3,6 +3,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ReferenceLine, Cell, ResponsiveContainer,
 } from 'recharts';
+import { formatDate } from '../utils/format';
 
 const STROKE_COLORS = {
   freestyle:    '#26c6f9',
@@ -123,7 +124,7 @@ function BestSets({ bestSets, compareBestSets, swimActivities, compareId, onSele
           >
             <option value="">Compare with…</option>
             {swimActivities.map(s => (
-              <option key={s.id} value={s.id}>{s.date} — {s.distance_miles != null ? `${(s.distance_miles * 1760).toFixed(0)}yd` : ''}</option>
+              <option key={s.id} value={s.id}>{formatDate(s.date)} — {s.distance_miles != null ? `${(s.distance_miles * 1760).toFixed(0)}yd` : ''}</option>
             ))}
           </select>
         )}

@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Workout Viz</title>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; background: #0d0d0f; }
+  body {
+    font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh;
+  }
+  button { font-family: inherit; }
+  ::-webkit-scrollbar { display: none; }
+  * { scrollbar-width: none; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" src="app-components.jsx"></script>
+<script type="text/babel" src="Dashboard.jsx"></script>
+<script type="text/babel" src="Activities.jsx"></script>
+
+<script type="text/babel">
+// ── Tweaks defaults ───────────────────────────────────────────────────────────
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "accentColor": "green",
+  "cardStyle": "bordered",
+  "density": "compact"
+}/*EDITMODE-END*/;
+
+// ── Tweaks panel ──────────────────────────────────────────────────────────────
+function TweaksPanel({ tweaks, setTweak, onClose }) {
+  return (
+    <div style={{
+      position: 'absolute', bottom: 90, right: 12, zIndex: 999,
+      background: '#1e1e24', border: `1px solid #2a2a32`,
+      borderRadius: 16, padding: 16, width: 220,
+      boxShadow: '0 20px 60px #00000080',
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: '#f0f0f4' }}>Tweaks</span>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#4a4a56', fontSize: 18, lineHeight: 1 }}>×</button>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', color: '#4a4a56', textTransform: 'uppercase', marginBottom: 7 }}>Accent Color</div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {[
+              { key: 'cyan', color: '#26c6f9' },
+              { key: 'green', color: '#22c55e' },
+              { key: 'violet', color: '#a78bfa' },
+              { key: 'amber', color: '#f59e0b' },
+            ].map(opt => (
+              <button key={opt.key} onClick={() => setTweak('accentColor', opt.key)} style={{
+                width: 28, height: 28, borderRadius: '50%', background: opt.color,
+                border: tweaks.accentColor === opt.key ? `2px solid #fff` : '2px solid transparent',
+                cursor: 'pointer', transition: 'border 0.15s',
+              }} />
+            ))}
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', color: '#4a4a56', textTransform: 'uppercase', marginBottom: 7 }}>Card Style</div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {['bordered', 'flat', 'elevated'].map(opt => (
+              <button key={opt} onClick={() => setTweak('cardStyle', opt)} style={{
+                flex: 1, padding: '6px 0', borderRadius: 8, fontSize: 11, fontWeight: 600,
+                background: tweaks.cardStyle === opt ? '#26c6f920' : 'transparent',
+                border: `1px solid ${tweaks.cardStyle === opt ? '#26c6f9' : '#2a2a32'}`,
+                color: tweaks.cardStyle === opt ? '#26c6f9' : '#4a4a56',
+                cursor: 'pointer', textTransform: 'capitalize',
+              }}>{opt}</button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', color: '#4a4a56', textTransform: 'uppercase', marginBottom: 7 }}>Density</div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {['compact', 'comfortable'].map(opt => (
+              <button key={opt} onClick={() => setTweak('density', opt)} style={{
+                flex: 1, padding: '6px 0', borderRadius: 8, fontSize: 11, fontWeight: 600,
+                background: tweaks.density === opt ? '#26c6f920' : 'transparent',
+                border: `1px solid ${tweaks.density === opt ? '#26c6f9' : '#2a2a32'}`,
+                color: tweaks.density === opt ? '#26c6f9' : '#4a4a56',
+                cursor: 'pointer', textTransform: 'capitalize',
+              }}>{opt}</button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Advanced placeholder ──────────────────────────────────────────────────────
+function AdvancedPage() {
+  return (
+    <div style={{
+      position: 'absolute', top: 0, left: 0, right: 0, bottom: 82,
+      overflowY: 'auto', padding: '16px 16px 32px',
+    }}>
+      <div style={{ paddingTop: 4, marginBottom: 20 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: COLORS.textMuted, textTransform: 'uppercase', marginBottom: 4 }}>
+          Advanced Analytics
+        </div>
+        <h1 style={{ fontSize: 28, fontWeight: 800, color: COLORS.textPrimary, letterSpacing: '-0.04em' }}>Advanced</h1>
+      </div>
+      {[
+        { label: 'Best Benchmarks', sub: 'Fastest efforts for key distances', color: COLORS.cyan },
+        { label: 'Pace Over Time', sub: 'Scatter plot by activity type', color: COLORS.violet },
+        { label: 'Heart Rate Trend', sub: 'HR distribution over time', color: COLORS.pink },
+        { label: 'Pace vs Heart Rate', sub: 'Efficiency analysis', color: COLORS.amber },
+        { label: 'Weekly Mileage', sub: 'Volume trends by week', color: COLORS.green },
+      ].map(item => (
+        <div key={item.label} style={{
+          background: COLORS.card, borderRadius: 14,
+          border: `1px solid ${COLORS.border}`,
+          borderLeft: `3px solid ${item.color}`,
+          padding: '16px', marginBottom: 10,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: COLORS.textPrimary, marginBottom: 3 }}>{item.label}</div>
+            <div style={{ fontSize: 12, color: COLORS.textMuted }}>{item.sub}</div>
+          </div>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={COLORS.textMuted} strokeWidth="2.5" strokeLinecap="round">
+            <polyline points="9 18 15 12 9 6"/>
+          </svg>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Root app ──────────────────────────────────────────────────────────────────
+function App() {
+  const [tab, setTab] = React.useState('dashboard');
+  const [selectedActivity, setSelectedActivity] = React.useState(null);
+  const [showTweaks, setShowTweaks] = React.useState(false);
+  const [tweaks, setTweakState] = React.useState(TWEAK_DEFAULTS);
+
+  const setTweak = (key, value) => {
+    const next = { ...tweaks, [key]: value };
+    setTweakState(next);
+    window.parent.postMessage({ type: '__edit_mode_set_keys', edits: next }, '*');
+  };
+
+  React.useEffect(() => {
+    window.addEventListener('message', (e) => {
+      if (e.data?.type === '__activate_edit_mode') setShowTweaks(true);
+      if (e.data?.type === '__deactivate_edit_mode') setShowTweaks(false);
+    });
+    window.parent.postMessage({ type: '__edit_mode_available' }, '*');
+  }, []);
+
+  const handleTabChange = (newTab) => {
+    setTab(newTab);
+    setSelectedActivity(null);
+  };
+
+  // Phone frame dimensions
+  const frameW = 390, frameH = 844;
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      width: '100vw', minHeight: '100vh', background: '#07070a',
+      padding: '20px 0',
+    }}>
+      {/* ── Phone shell ── */}
+      <div style={{
+        width: frameW, height: frameH,
+        background: COLORS.bg,
+        borderRadius: 52,
+        border: '8px solid #222228',
+        boxShadow: '0 0 0 1px #333340, 0 40px 120px #000000c0, inset 0 0 0 1px #0d0d14',
+        position: 'relative', overflow: 'hidden',
+        flexShrink: 0,
+      }}>
+        {/* Status bar */}
+        <div style={{
+          height: 50, display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
+          padding: '0 28px 8px', flexShrink: 0,
+        }}>
+          <span style={{ fontSize: 15, fontWeight: 700, color: COLORS.textPrimary, letterSpacing: '-0.01em' }}>8:27</span>
+          <div style={{
+            width: 120, height: 28, background: '#0d0d0f', borderRadius: 20,
+            position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)',
+          }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <svg width="16" height="12" viewBox="0 0 16 12" fill={COLORS.textPrimary}>
+              <rect x="0" y="4" width="3" height="8" rx="1"/><rect x="4.5" y="2.5" width="3" height="9.5" rx="1"/>
+              <rect x="9" y="0.5" width="3" height="11.5" rx="1"/><rect x="13.5" y="0" width="2.5" height="12" rx="1" opacity="0.3"/>
+            </svg>
+            <svg width="16" height="12" viewBox="0 0 24 16" fill={COLORS.textPrimary}>
+              <path d="M12 3C8.5 3 5.4 4.4 3.1 6.6L1 4.5C3.8 1.7 7.7 0 12 0s8.2 1.7 11 4.5L20.9 6.6C18.6 4.4 15.5 3 12 3z"/>
+              <path d="M12 8c-2.2 0-4.1.9-5.5 2.3L4.4 8.2C6.3 6.3 8.9 5.2 12 5.2c3.1 0 5.7 1.1 7.6 3L17.5 10.3C16.1 8.9 14.2 8 12 8z" opacity="0.7"/>
+              <circle cx="12" cy="14" r="2"/>
+            </svg>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <div style={{ width: 22, height: 11, border: `1.5px solid ${COLORS.textPrimary}`, borderRadius: 3, padding: '1.5px', display: 'flex', alignItems: 'center' }}>
+                <div style={{ width: '78%', height: '100%', background: COLORS.green, borderRadius: 1.5 }} />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Screen content */}
+        <div style={{
+          position: 'absolute', top: 50, left: 0, right: 0, bottom: 0,
+          background: COLORS.bg, overflow: 'hidden',
+        }}>
+          {selectedActivity ? (
+            <ActivityDetail
+              activity={selectedActivity}
+              onBack={() => setSelectedActivity(null)}
+            />
+          ) : (
+            <>
+              {tab === 'dashboard' && <Dashboard />}
+              {tab === 'activities' && <Activities onSelectActivity={setSelectedActivity} />}
+              {tab === 'advanced' && <AdvancedPage />}
+            </>
+          )}
+
+          <BottomNav
+            active={selectedActivity ? tab : tab}
+            onChange={handleTabChange}
+          />
+        </div>
+
+        {/* Home indicator */}
+        <div style={{
+          position: 'absolute', bottom: 8, left: '50%', transform: 'translateX(-50%)',
+          width: 120, height: 4, background: COLORS.textPrimary, borderRadius: 3, opacity: 0.3,
+          zIndex: 200,
+        }} />
+
+        {/* Tweaks panel */}
+        {showTweaks && (
+          <TweaksPanel
+            tweaks={tweaks}
+            setTweak={setTweak}
+            onClose={() => {
+              setShowTweaks(false);
+              window.parent.postMessage({ type: '__edit_mode_dismissed' }, '*');
+            }}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+</script>
+
+<template id="__bundler_thumbnail">
+  <svg viewBox="0 0 120 80" xmlns="http://www.w3.org/2000/svg">
+    <rect width="120" height="80" fill="#0d0d0f"/>
+    <rect x="35" y="5" width="50" height="70" rx="8" fill="#18181c" stroke="#2a2a32" stroke-width="1"/>
+    <rect x="44" y="22" width="14" height="14" rx="3" fill="#26c6f920" stroke="#26c6f9" stroke-width="0.5"/>
+    <rect x="62" y="22" width="14" height="14" rx="3" fill="#a78bfa20" stroke="#a78bfa" stroke-width="0.5"/>
+    <rect x="44" y="40" width="32" height="6" rx="2" fill="#1e1e24"/>
+    <rect x="44" y="50" width="24" height="4" rx="2" fill="#1e1e24" opacity="0.6"/>
+    <circle cx="60" cy="13" r="3" fill="#22c55e" opacity="0.8"/>
+  </svg>
+</template>
+</body>
+</html>

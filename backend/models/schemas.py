@@ -313,13 +313,95 @@ class FitnessResponse(BaseModel):
     max_hr: Optional[float] = None
 
 
+class ReadinessFactor(BaseModel):
+    name:   str                # Training load | HRV | Resting HR | Sleep
+    score:  int                # 0-100 for this factor alone
+    weight: float
+    detail: str                # human-readable "why" for this factor
+
+
 class ReadinessResponse(BaseModel):
-    score: int                 # 0-100
+    score: int                 # 0-100 (blended)
     zone: str                  # peak | ready | moderate | easy | recovery
     recommendation: str
     ctl: float
     atl: float
     tsb: float
+    factors: List[ReadinessFactor] = []
+    why: Optional[str] = None  # one-line explanation joining the factors
+
+
+class ReadinessHistoryPoint(BaseModel):
+    date:         str
+    score:        int
+    zone:         str
+    load_score:   int
+    daily_stress: float
+    hard_on_red:  bool         # trained hard on a sub-30 morning
+
+
+class ReadinessHistoryResponse(BaseModel):
+    data: List[ReadinessHistoryPoint]
+    count: int
+
+
+class EfficiencyPoint(BaseModel):
+    activity_id: int
+    date:        str
+    name:        str
+    ef:          float          # meters/min per bpm
+    ef_rolling:  float
+    pace:        float
+    avg_hr:      float
+    decoupling:  Optional[float] = None   # % EF decay first→second half
+
+
+class EfficiencyTrendResponse(BaseModel):
+    points:        List[EfficiencyPoint]
+    verdict:       Optional[str] = None
+    rolling_days:  int
+    activity_type: str
+
+
+class EffectCohort(BaseModel):
+    label:        str
+    n:            int
+    adj_pace:     float
+    adj_pace_str: str
+
+
+class EffectFinding(BaseModel):
+    factor:       str          # sleep | hrv | rhr | rest
+    headline:     str
+    delta_sec_mi: float
+    confidence:   str          # high | moderate
+    cohorts:      List[EffectCohort]
+
+
+class EffectFindingsResponse(BaseModel):
+    findings:      List[EffectFinding]
+    runs_analyzed: int
+    ref_hr:        Optional[float] = None
+
+
+class DigestSection(BaseModel):
+    kind:  str                 # volume | efficiency | best_moment | body | insight
+    title: str
+    text:  str
+
+
+class DigestStats(BaseModel):
+    activities: int
+    miles:      float
+    hours:      float
+    prev_miles: float
+
+
+class WeeklyDigestResponse(BaseModel):
+    week_start: str
+    week_end:   str
+    stats:      DigestStats
+    sections:   List[DigestSection]
 
 
 class PREvent(BaseModel):
@@ -349,6 +431,7 @@ class InsightResponse(BaseModel):
     split_quality:   Optional[Dict[str, Any]] = None
     pace_trend:      Optional[Dict[str, Any]] = None
     volume_context:  Optional[Dict[str, Any]] = None
+    comparison:      Optional[Dict[str, Any]] = None  # CMP-3: verdict summary
 
 
 class UserSetting(BaseModel):
@@ -380,6 +463,7 @@ class RouteActivity(BaseModel):
     average_heartrate: Optional[float] = None
     total_elevation_gain: float
     duration_str: str
+    moving_time_min: Optional[float] = None
     similarity_score: float
 
 
@@ -507,6 +591,12 @@ class TrainingBlocksResponse(BaseModel):
     count: int
 
 
+# ── Device identity schemas ────────────────────────────────────────────────────
+
+class DeviceRegisterResponse(BaseModel):
+    device_token: str
+
+
 class RootResponse(BaseModel):
     app: str
     version: str
@@ -536,3 +626,95 @@ class ImportStatusResponse(BaseModel):
     failed:     int = 0
     started_at: Optional[str] = None
     error:      Optional[str] = None
+
+
+# ── Daily health metrics (BIO) ─────────────────────────────────────────────
+
+class BaselineBand(BaseModel):
+    mean:  float
+    lower: float
+    upper: float
+
+
+class HealthMetricComparison(BaseModel):
+    metric:        str
+    label:         str
+    unit:          str
+    date:          str                      # day the snapshot is anchored at
+    today:         float
+    vs_yesterday:  Optional[float] = None
+    vs_7d_avg:     Optional[float] = None
+    vs_30d_avg:    Optional[float] = None
+    vs_365d_avg:   Optional[float] = None
+    avg_7d:        Optional[float] = None
+    avg_30d:       Optional[float] = None
+    avg_365d:      Optional[float] = None
+    baseline_band: Optional[BaselineBand] = None
+    out_of_band:   bool = False
+    spark_30d:     List[float] = []         # 7d rolling mean, last 30 days
+
+
+class HealthMetricPoint(BaseModel):
+    date:        str
+    value:       float
+    rolling_7d:  Optional[float] = None
+    rolling_30d: Optional[float] = None
+
+
+class HealthMetricSeriesResponse(BaseModel):
+    metric:     str
+    label:      str
+    unit:       str
+    days:       int
+    points:     List[HealthMetricPoint]
+    comparison: Optional[HealthMetricComparison] = None
+
+
+class HealthSummaryResponse(BaseModel):
+    metrics: List[HealthMetricComparison]
+
+
+# ── Post-workout comparison (CMP) ──────────────────────────────────────────
+
+class ComparisonCohort(BaseModel):
+    kind:     str                      # route | similar | distance
+    label:    str                      # "7 previous runs on Riverside Loop"
+    route_id: Optional[int] = None
+    size:     int
+
+
+class ComparisonDeltas(BaseModel):
+    pace_vs_avg_sec_mi:  Optional[float] = None   # negative = faster than avg
+    pace_vs_best_sec_mi: Optional[float] = None
+    hr_vs_avg_bpm:       Optional[float] = None
+    time_vs_avg_sec:     Optional[float] = None
+    time_vs_best_sec:    Optional[float] = None
+
+
+class RelativeEffort(BaseModel):
+    trimp:      float
+    percentile: float                  # 0-100 of trailing-90d efforts
+    rank:       int
+    of:         int
+    label:      str
+
+
+class ComparisonHistoryPoint(BaseModel):
+    activity_id:  int
+    date:         Optional[str] = None
+    time_seconds: Optional[float] = None
+    pace:         Optional[float] = None
+    is_current:   bool = False
+
+
+class ComparisonResponse(BaseModel):
+    activity_id: int
+    cohort:      Optional[ComparisonCohort] = None
+    rank:        Optional[int] = None
+    rank_of:     Optional[int] = None
+    rank_metric: Optional[str] = None  # time | pace
+    efficiency:  Optional[str] = None  # breakthrough | pushed | easier | …
+    verdict:     Optional[str] = None
+    deltas:      Optional[ComparisonDeltas] = None
+    effort:      Optional[RelativeEffort] = None
+    history:     List[ComparisonHistoryPoint] = []

@@ -15,6 +15,15 @@ final class HealthKitManager {
         HKObjectType.quantityType(forIdentifier: .distanceWalkingRunning)!,
         HKObjectType.quantityType(forIdentifier: .distanceCycling)!,
         HKObjectType.quantityType(forIdentifier: .activeEnergyBurned)!,
+        // Daily health metrics (BIO-3) — synced by MetricsSyncEngine
+        HKObjectType.quantityType(forIdentifier: .restingHeartRate)!,
+        HKObjectType.quantityType(forIdentifier: .heartRateVariabilitySDNN)!,
+        HKObjectType.quantityType(forIdentifier: .vo2Max)!,
+        HKObjectType.quantityType(forIdentifier: .respiratoryRate)!,
+        HKObjectType.quantityType(forIdentifier: .oxygenSaturation)!,
+        HKObjectType.quantityType(forIdentifier: .stepCount)!,
+        HKObjectType.quantityType(forIdentifier: .bodyMass)!,
+        HKObjectType.categoryType(forIdentifier: .sleepAnalysis)!,
     ]
 
     var isAvailable: Bool { HKHealthStore.isHealthDataAvailable() }
@@ -24,7 +33,73 @@ final class HealthKitManager {
         try await store.requestAuthorization(toShare: [], read: readTypes)
     }
 
-    /// Fetch workouts modified after `anchor` date.
+    /// Result type for anchored HealthKit queries.
+    struct AnchoredResult {
+        let workouts: [HKWorkout]
+        let deletedUUIDs: [UUID]
+        let anchor: HKQueryAnchor
+    }
+
+    /// Anchored incremental fetch — returns new/updated workouts, deleted workout
+    /// UUIDs, and a new anchor to persist for the next call.
+    ///
+    /// Pass `anchor: nil` for the initial sync (returns everything matching `predicate`).
+    /// Pass the saved anchor for incremental syncs (predicate can be nil — all changes
+    /// since the anchor are returned regardless of date).
+    func fetchWorkoutsAnchored(
+        anchor: HKQueryAnchor?,
+        predicate: NSPredicate?
+    ) async throws -> AnchoredResult {
+        return try await withCheckedThrowingContinuation { cont in
+            let query = HKAnchoredObjectQuery(
+                type: .workoutType(),
+                predicate: predicate,
+                anchor: anchor,
+                limit: HKObjectQueryNoLimit
+            ) { _, samples, deletedObjects, newAnchor, error in
+                if let error { cont.resume(throwing: error); return }
+                guard let newAnchor else {
+                    cont.resume(throwing: URLError(.unknown)); return
+                }
+                let workouts = (samples as? [HKWorkout]) ?? []
+                let deleted  = (deletedObjects ?? []).map { $0.uuid }
+                cont.resume(returning: AnchoredResult(
+                    workouts: workouts, deletedUUIDs: deleted, anchor: newAnchor
+                ))
+            }
+            store.execute(query)
+        }
+    }
+
+    /// Register an observer query so HealthKit wakes the app when new workouts are
+    /// saved.  Requires `UIBackgroundModes: ["healthkit"]` in Info.plist — enable
+    /// the "Background Delivery" option in Xcode's HealthKit capability settings.
+    func registerWorkoutObserver(onUpdate: @escaping () -> Void) {
+        store.enableBackgroundDelivery(for: .workoutType(), frequency: .immediate) { ok, err in
+            if !ok { print("[HK] enableBackgroundDelivery failed: \(err?.localizedDescription ?? "?")") }
+        }
+        let q = HKObserverQuery(sampleType: .workoutType(), predicate: nil) { _, done, error in
+            if error == nil { onUpdate() }
+            done()
+        }
+        store.execute(q)
+    }
+
+    /// Wake the app when new sleep data lands (typically right after the user
+    /// wakes up and the Watch syncs) — drives the morning readiness report.
+    func registerSleepObserver(onUpdate: @escaping () -> Void) {
+        guard let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else { return }
+        store.enableBackgroundDelivery(for: sleepType, frequency: .immediate) { ok, err in
+            if !ok { print("[HK] sleep background delivery failed: \(err?.localizedDescription ?? "?")") }
+        }
+        let q = HKObserverQuery(sampleType: sleepType, predicate: nil) { _, done, error in
+            if error == nil { onUpdate() }
+            done()
+        }
+        store.execute(q)
+    }
+
+    /// Legacy date-range fetch — kept for performFullBackfill's predicate path.
     func fetchWorkouts(since startDate: Date) async throws -> [HKWorkout] {
         let predicate = HKQuery.predicateForSamples(
             withStart: startDate, end: Date(), options: .strictStartDate)
@@ -82,8 +157,15 @@ final class HealthKitManager {
         guard let qtype = HKQuantityType.quantityType(forIdentifier: typeId) else {
             return []
         }
-        let predicate = HKQuery.predicateForSamples(
+        // Filter by the workout's source to avoid double-counting samples from
+        // both Apple Watch and iPhone during the same workout time window.
+        let timePredicate = HKQuery.predicateForSamples(
             withStart: workout.startDate, end: workout.endDate, options: .strictStartDate)
+        let sourcePredicate = HKQuery.predicateForObjects(
+            from: Set([workout.sourceRevision.source]))
+        let predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+            timePredicate, sourcePredicate
+        ])
         let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
 
         let samples: [HKQuantitySample] = try await withCheckedThrowingContinuation { cont in

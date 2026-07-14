@@ -24,7 +24,9 @@ _SYNC_TIMEOUT_SECONDS = 600  # 10-minute hard cap on any sync operation
 class SyncService:
     def __init__(self):
         self.auth = get_strava_auth()
-        self.data_service = get_data_service()
+        # Strava sync is dormant; data_service requires a user_id and must be
+        # re-wired when Strava sync is re-enabled under the multi-tenant model.
+        self.data_service = None
         self.client = Client()
 
         # Configure stravalib to NOT sleep when rate limited
@@ -152,7 +154,10 @@ class SyncService:
             self.client.access_token = self.auth.get_access_token()
 
             # Find activities without splits, ordered most-recent first
-            conn = get_conn()
+            raise NotImplementedError(
+                "Strava sync is dormant — re-wire user_id via get_data_service(user_id) before re-enabling"
+            )
+            conn = get_conn()  # unreachable; kept for reference
             placeholders = ','.join('?' * len(types))
             query = f"""
                 SELECT a.id, a.name, a.type, a.start_date
@@ -358,7 +363,10 @@ class SyncService:
         finished_at: Optional[str] = None,
     ) -> None:
         try:
-            conn = get_conn()
+            raise NotImplementedError(
+                "Strava sync is dormant — re-wire user_id via get_data_service(user_id) before re-enabling"
+            )
+            conn = get_conn()  # unreachable; kept for reference
             conn.execute("""
                 INSERT INTO sync_log (
                     sync_kind, status, deep, activity_id, fetched, added, skipped,

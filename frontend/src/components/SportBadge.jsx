@@ -1,26 +1,27 @@
 import { activityColor } from '../utils/format';
 
 const TYPE_ABBR = {
-  Run: 'RN', VirtualRun: 'RN', TrailRun: 'TR',
-  Ride: 'RI', VirtualRide: 'RI',
-  Hike: 'HK', Walk: 'WK', Swim: 'SW',
-  WeightTraining: 'WT', Workout: 'WO', HIIT: 'HI',
-  Yoga: 'YG', CoreTraining: 'CR', Pilates: 'PL',
-  Crossfit: 'CF', Rowing: 'RW', Elliptical: 'EL',
-  AlpineSki: 'SK', NordicSki: 'SK',
-  Recovery: 'RC', MindAndBody: 'MB',
-  FunctionalStrengthTraining: 'ST',
-  StairStepper: 'SS',
+  Run: 'RUN', VirtualRun: 'RUN', TrailRun: 'TRL',
+  Ride: 'RIDE', VirtualRide: 'RIDE',
+  Hike: 'HIKE', Walk: 'WALK', Swim: 'SWIM',
+  WeightTraining: 'STR', Workout: 'WKT', HIIT: 'HIIT',
+  Yoga: 'YOGA', CoreTraining: 'CORE', Pilates: 'PLTS',
+  Crossfit: 'CRFT', Rowing: 'ROW', Elliptical: 'ELLI',
+  AlpineSki: 'SKI', NordicSki: 'SKI',
+  Recovery: 'RCVR', MindAndBody: 'MIND',
+  FunctionalStrengthTraining: 'STR',
+  StairStepper: 'STAIR',
 };
 
 export default function SportBadge({ type, size = 36 }) {
   const color = activityColor(type);
-  const abbr = TYPE_ABBR[type] || (type ? type.slice(0, 2).toUpperCase() : '??');
+  const abbr = TYPE_ABBR[type] || (type ? type.slice(0, 4).toUpperCase() : '?');
   const radius = Math.round(size * 0.2);
   return (
     <div style={{
-      width: size,
+      minWidth: size,
       height: size,
+      padding: '0 6px',
       borderRadius: radius,
       background: `${color}14`,
       border: `1px solid ${color}35`,
@@ -31,8 +32,9 @@ export default function SportBadge({ type, size = 36 }) {
       color,
       fontFamily: "var(--font-display)",
       fontWeight: 800,
-      fontSize: Math.round(size * 0.28),
-      letterSpacing: '-0.02em',
+      fontSize: Math.round(size * 0.24),
+      letterSpacing: '-0.01em',
+      whiteSpace: 'nowrap',
       userSelect: 'none',
     }}>
       {abbr}

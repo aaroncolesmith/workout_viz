@@ -12,18 +12,15 @@ from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
 
-from backend.services.data_service import get_data_service
 
 logger = logging.getLogger(__name__)
 
 
-def get_activity_pca(activity_type: str = "Run") -> Dict:
+def get_activity_pca(activity_type: str = "Run", *, data_service) -> Dict:
     """
     Run PCA on all activities of a given type.
-    Returns coordinates, clusters, and feature loadings.
-    Result is memoised in the analytics TTL cache.
+    data_service: the caller's per-user DataService instance.
     """
-    data_service = get_data_service()
     cache = data_service.get_analytics_cache()
     cache_key = f"pca:{activity_type}"
 

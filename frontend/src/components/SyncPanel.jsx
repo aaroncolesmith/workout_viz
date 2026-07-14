@@ -81,7 +81,11 @@ export default function SyncPanel({ onSyncComplete }) {
 
   // ── Mount: check if any job is already running ────────────────────────
   useEffect(() => {
-    getAuthStatus().then(setAuthStatus).catch(console.error);
+    // Strava is dormant; /api/auth/status may not exist. A failed check just
+    // means "not connected" — the Apple Health import must stay available.
+    getAuthStatus()
+      .then(setAuthStatus)
+      .catch(() => setAuthStatus({ authenticated: false, unavailable: true }));
     getSyncStatus().then(state => {
       if (state.status === 'running') { setSyncState(state); startPolling(); }
     }).catch(() => {});
@@ -218,35 +222,6 @@ export default function SyncPanel({ onSyncComplete }) {
             </span>
           )}
 
-          {/* Apple Health import progress */}
-          {ahLabel && (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
-              <span style={{
-                fontSize: '0.75rem',
-                color: isAhError ? '#f87171' : isAhDone ? '#34d399' : '#fb923c',
-                background: 'rgba(255,255,255,0.05)',
-                padding: '3px 10px',
-                borderRadius: 20,
-                whiteSpace: 'nowrap',
-                maxWidth: 240,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-              }}>
-                {ahLabel}
-              </span>
-              {isAhRunning && (
-                <div style={{ width: 120, height: 2, background: 'rgba(255,255,255,0.1)', borderRadius: 1, overflow: 'hidden' }}>
-                  <div style={{
-                    height: '100%',
-                    background: 'linear-gradient(90deg, #fb923c, #f97316)',
-                    borderRadius: 1,
-                    animation: 'progress-indeterminate 1.5s ease-in-out infinite',
-                  }} />
-                </div>
-              )}
-            </div>
-          )}
-
           {/* Splits progress */}
           {splitsLabel && (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
@@ -340,36 +315,8 @@ export default function SyncPanel({ onSyncComplete }) {
             {isSplitsRunning ? 'Syncing Splits…' : 'Sync Splits'}
           </button>
 
-          {/* Apple Health import */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".zip,.xml"
-            style={{ display: 'none' }}
-            onChange={handleAppleHealthFile}
-          />
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isAhRunning}
-            title="Import Apple Health export.zip — includes workouts not tracked in Strava (strength, swim, etc.)"
-            style={{
-              background: 'transparent',
-              border: '1px solid rgba(251,146,60,0.3)',
-              color: isAhRunning ? 'rgba(251,146,60,0.35)' : 'rgba(251,146,60,0.75)',
-              fontFamily: "'Inter', sans-serif",
-              fontWeight: 500,
-              fontSize: '0.68rem',
-              letterSpacing: '0.04em',
-              padding: '5px 12px',
-              borderRadius: 6,
-              cursor: isAhRunning ? 'not-allowed' : 'pointer',
-              transition: 'all 0.15s',
-            }}
-          >
-            {isAhRunning ? 'Importing…' : 'Apple Health'}
-          </button>
         </div>
-      ) : (
+      ) : !authStatus.unavailable ? (
         <button
           onClick={handleConnect}
           style={{
@@ -387,7 +334,63 @@ export default function SyncPanel({ onSyncComplete }) {
         >
           Connect Strava
         </button>
+      ) : null}
+
+      {/* Apple Health import — independent of Strava availability */}
+      {ahLabel && (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
+          <span style={{
+            fontSize: '0.75rem',
+            color: isAhError ? '#f87171' : isAhDone ? '#34d399' : '#fb923c',
+            background: 'rgba(255,255,255,0.05)',
+            padding: '3px 10px',
+            borderRadius: 20,
+            whiteSpace: 'nowrap',
+            maxWidth: 240,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          }}>
+            {ahLabel}
+          </span>
+          {isAhRunning && (
+            <div style={{ width: 120, height: 2, background: 'rgba(255,255,255,0.1)', borderRadius: 1, overflow: 'hidden' }}>
+              <div style={{
+                height: '100%',
+                background: 'linear-gradient(90deg, #fb923c, #f97316)',
+                borderRadius: 1,
+                animation: 'progress-indeterminate 1.5s ease-in-out infinite',
+              }} />
+            </div>
+          )}
+        </div>
       )}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".zip,.xml"
+        style={{ display: 'none' }}
+        onChange={handleAppleHealthFile}
+      />
+      <button
+        onClick={() => fileInputRef.current?.click()}
+        disabled={isAhRunning}
+        title="Import Apple Health export.zip — includes workouts not tracked in Strava (strength, swim, etc.)"
+        style={{
+          background: 'transparent',
+          border: '1px solid rgba(251,146,60,0.3)',
+          color: isAhRunning ? 'rgba(251,146,60,0.35)' : 'rgba(251,146,60,0.75)',
+          fontFamily: "'Inter', sans-serif",
+          fontWeight: 500,
+          fontSize: '0.68rem',
+          letterSpacing: '0.04em',
+          padding: '5px 12px',
+          borderRadius: 6,
+          cursor: isAhRunning ? 'not-allowed' : 'pointer',
+          transition: 'all 0.15s',
+        }}
+      >
+        {isAhRunning ? 'Importing…' : 'Apple Health'}
+      </button>
     </div>
   );
 }

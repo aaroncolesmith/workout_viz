@@ -27,7 +27,6 @@ Schema returned by get_insights():
 
 import logging
 from typing import Optional
-from backend.services.database import get_conn
 
 logger = logging.getLogger(__name__)
 
@@ -221,10 +220,15 @@ def _split_quality_insight(activity_id: int, conn) -> Optional[dict]:
         ORDER  BY split_number ASC
     """, (activity_id,)).fetchall()
 
-    if len(splits) < 6:  # Need at least 0.6 miles of data
+    total = len(splits)
+    total_dist = float(splits[-1]["total_distance_miles"] or 0)
+    if total < 4 or total_dist < 0.6:   # need at least 0.6 miles of data
         return None
 
-    total = len(splits)
+    # Grain-agnostic: derive miles-per-split from the rows themselves
+    # (legacy rows are 0.1 mi, newer imports are finer).
+    grain = total_dist / total
+
     half  = total // 2
     first_half  = splits[:half]
     second_half = splits[half:]
@@ -232,16 +236,15 @@ def _split_quality_insight(activity_id: int, conn) -> Optional[dict]:
     first_avg  = sum(float(s["time_seconds"]) for s in first_half)  / len(first_half)
     second_avg = sum(float(s["time_seconds"]) for s in second_half) / len(second_half)
 
-    # Convert to pace per mile (each split is 0.1 mile)
-    first_pace_min  = (first_avg  / 60) * 10  # time for 0.1 mi → multiply by 10 for 1 mi
-    second_pace_min = (second_avg / 60) * 10
+    # Convert avg split time to pace per mile
+    first_pace_min  = (first_avg  / 60) / grain
+    second_pace_min = (second_avg / 60) / grain
 
-    delta_s = second_avg - first_avg  # positive = slowing down, negative = speeding up
-    delta_pace = second_pace_min - first_pace_min
+    delta_pace = second_pace_min - first_pace_min   # positive = slowing down
 
-    if abs(delta_s) < 3:  # < 3 sec per split = effectively even
+    if abs(delta_pace) < 0.5:  # < 30 s/mi = effectively even
         split_type = "even"
-    elif delta_s < 0:
+    elif delta_pace < 0:
         split_type = "negative"  # faster in second half
     else:
         split_type = "positive"  # slower in second half
@@ -250,7 +253,7 @@ def _split_quality_insight(activity_id: int, conn) -> Optional[dict]:
         "split_type":       split_type,
         "first_pace_str":   _fmt_pace(first_pace_min),
         "second_pace_str":  _fmt_pace(second_pace_min),
-        "delta_seconds":    round(abs(delta_s), 1),
+        "delta_seconds":    round(abs(delta_pace) * 60, 1),   # sec per mile
         "delta_pace":       round(abs(delta_pace), 2),
         "total_splits":     total,
     }
@@ -346,13 +349,11 @@ def _volume_context_insight(activity_id: int, activity_type: str, conn) -> Optio
 
 # ── main entry point ─────────────────────────────────────────────────────────
 
-def get_insights(activity_id: int) -> dict:
+def get_insights(activity_id: int, *, conn) -> dict:
     """
     Generate structured insights for a single activity.
-    Returns a dict with named sections; any section may be None if
-    there is not enough data to generate a meaningful insight.
+    conn: the current user's DB connection.
     """
-    conn = get_conn()
 
     act = conn.execute(
         "SELECT id, type, name FROM activities WHERE id = ?", (activity_id,)

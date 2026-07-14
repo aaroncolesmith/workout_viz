@@ -34,7 +34,7 @@ from datetime import datetime
 from typing import Optional
 from xml.etree.ElementTree import iterparse
 
-from backend.services.database import get_conn
+from backend.services.database import get_conn as _get_conn_raw
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +76,8 @@ ACTIVITY_TYPE_MAP: dict[str, str] = {
     'HKWorkoutActivityTypePreparationAndRecovery':     'Recovery',
 }
 
-# ── Background import state ────────────────────────────────────────────────
-_state: dict = {
+# ── Background import state (per-user — this backend is multi-tenant) ──────
+_IDLE_STATE: dict = {
     'status':     'idle',   # idle | running | done | error
     'message':    '',
     'parsed':     0,
@@ -87,40 +87,38 @@ _state: dict = {
     'started_at': None,
     'error':      None,
 }
+_states: dict[str, dict] = {}   # user_id → import state
 _lock = threading.Lock()
 
 
-def get_import_status() -> dict:
+def get_import_status(user_id: str) -> dict:
     with _lock:
-        return dict(_state)
+        return dict(_states.get(user_id) or _IDLE_STATE)
 
 
-def start_import(file_bytes: bytes, filename: str) -> dict:
-    """Kick off a background import.  Returns immediately."""
+def start_import(file_bytes: bytes, filename: str, user_id: str) -> dict:
+    """Kick off a background import for this user.  Returns immediately."""
     with _lock:
-        if _state['status'] == 'running':
+        existing = _states.get(user_id)
+        if existing and existing['status'] == 'running':
             return {'status': 'already_running'}
-        _state.update({
+        _states[user_id] = {
+            **_IDLE_STATE,
             'status':     'running',
             'message':    'Starting…',
-            'parsed':     0,
-            'added':      0,
-            'skipped':    0,
-            'failed':     0,
             'started_at': datetime.now().isoformat(),
-            'error':      None,
-        })
+        }
 
-    t = threading.Thread(target=_run_import, args=(file_bytes, filename), daemon=True)
+    t = threading.Thread(target=_run_import, args=(file_bytes, filename, user_id), daemon=True)
     t.start()
     return {'status': 'started'}
 
 
 # ── Internal helpers ───────────────────────────────────────────────────────
 
-def _set(**kw):
+def _set(user_id: str, **kw):
     with _lock:
-        _state.update(kw)
+        _states.setdefault(user_id, dict(_IDLE_STATE)).update(kw)
 
 
 def _ah_id(activity_type: str, start_date_iso: str) -> int:
@@ -130,6 +128,16 @@ def _ah_id(activity_type: str, start_date_iso: str) -> int:
     digest = hashlib.sha256(f"{activity_type}:{start_date_iso}".encode()).digest()
     val = int.from_bytes(digest[:6], 'big')
     return -(val or 1)
+
+
+def hk_activity_id(source_id: str) -> int:
+    """Stable negative ID for HealthKit-native syncs, from the HK workout UUID.
+    6 bytes so the value fits within JS Number.MAX_SAFE_INTEGER.  The insert
+    path (import_routes.healthkit_sync) and the delete-by-source endpoint both
+    use this — any scheme change must go through here so they can't drift.
+    """
+    digest = hashlib.sha256(f"hk:{source_id}".encode()).digest()
+    return -(int.from_bytes(digest[:6], 'big') or 1)
 
 
 def _parse_dt(s: str) -> Optional[datetime]:
@@ -264,16 +272,127 @@ def _parse_workouts(xml_bytes: bytes) -> list:
     return workouts
 
 
-# ── Pass 2: match HR samples ───────────────────────────────────────────────
+# ── Pass 2: match HR samples + accumulate daily health metrics ─────────────
 
-def _match_hr_data(xml_bytes: bytes, workouts: list):
+# HK Record type → (metric slug, aggregation).  Slugs must match
+# health_metrics_service.KNOWN_METRICS.  'sum' metrics (steps, energy) are
+# accumulated per source and the max source total per day wins — iPhone and
+# Watch both record them, and a blind sum double-counts.
+_QUANTITY_RECORD_MAP = {
+    'HKQuantityTypeIdentifierRestingHeartRate':         ('resting_heartrate', 'avg'),
+    'HKQuantityTypeIdentifierHeartRateVariabilitySDNN': ('hrv_sdnn', 'avg'),
+    'HKQuantityTypeIdentifierVO2Max':                   ('vo2max', 'avg'),
+    'HKQuantityTypeIdentifierRespiratoryRate':          ('respiratory_rate', 'avg'),
+    'HKQuantityTypeIdentifierOxygenSaturation':         ('blood_oxygen', 'avg'),
+    'HKQuantityTypeIdentifierStepCount':                ('steps', 'sum'),
+    'HKQuantityTypeIdentifierActiveEnergyBurned':       ('active_energy', 'sum'),
+    'HKQuantityTypeIdentifierBodyMass':                 ('body_mass', 'avg'),
+}
+
+
+class _DailyMetrics:
+    """Accumulates <Record> elements into one sample per (metric, local day)."""
+
+    def __init__(self):
+        self._avg = {}    # (metric, day) -> [sum, count, min, max]
+        self._sum = {}    # (metric, day, source) -> total
+        self._sleep_asleep = []  # (start_dt, end_dt)
+        self._sleep_inbed = []
+
+    def add_record(self, rtype: str, elem):
+        if rtype == 'HKCategoryTypeIdentifierSleepAnalysis':
+            self._add_sleep(elem)
+            return
+        mapping = _QUANTITY_RECORD_MAP.get(rtype)
+        if not mapping:
+            return
+        metric, agg = mapping
+        val_str = elem.get('value')
+        start = elem.get('startDate') or ''
+        if not val_str or len(start) < 10:
+            return
+        try:
+            val = float(val_str)
+        except ValueError:
+            return
+        if not (val == val and abs(val) != float('inf')) or val < 0:
+            return
+        # Unit normalisation
+        if metric == 'blood_oxygen' and val <= 1.0:
+            val *= 100.0                      # fraction → %
+        elif metric == 'body_mass' and elem.get('unit') == 'lb':
+            val *= 0.453592                   # store kg (canonical)
+        day = start[:10]                      # local day as recorded
+
+        if agg == 'sum':
+            key = (metric, day, elem.get('sourceName', ''))
+            self._sum[key] = self._sum.get(key, 0.0) + val
+        else:
+            acc = self._avg.get((metric, day))
+            if acc is None:
+                self._avg[(metric, day)] = [val, 1, val, val]
+            else:
+                acc[0] += val
+                acc[1] += 1
+                acc[2] = min(acc[2], val)
+                acc[3] = max(acc[3], val)
+
+    def _add_sleep(self, elem):
+        value = elem.get('value', '')
+        start_dt = _parse_dt(elem.get('startDate'))
+        end_dt = _parse_dt(elem.get('endDate'))
+        if not start_dt or not end_dt or end_dt <= start_dt:
+            return
+        if 'Asleep' in value:
+            self._sleep_asleep.append((start_dt, end_dt))
+        elif value.endswith('InBed'):
+            self._sleep_inbed.append((start_dt, end_dt))
+
+    @staticmethod
+    def _nightly_hours(intervals):
+        """Merge overlapping intervals (multi-device double-count), then total
+        hours per the day each merged session ENDS (the wake-up morning)."""
+        merged = []
+        for s, e in sorted(intervals):
+            if merged and s <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], e)
+            else:
+                merged.append([s, e])
+        by_day: dict = {}
+        for s, e in merged:
+            day = e.strftime('%Y-%m-%d')
+            by_day[day] = by_day.get(day, 0.0) + (e - s).total_seconds() / 3600.0
+        return by_day
+
+    def samples(self) -> list:
+        out = []
+        for (metric, day), (total, count, vmin, vmax) in self._avg.items():
+            out.append({'metric': metric, 'date': day,
+                        'value': round(total / count, 2),
+                        'min': round(vmin, 2), 'max': round(vmax, 2)})
+        # sum metrics: best single source per day (avoids iPhone+Watch double count)
+        best: dict = {}
+        for (metric, day, _source), total in self._sum.items():
+            key = (metric, day)
+            if total > best.get(key, 0.0):
+                best[key] = total
+        for (metric, day), total in best.items():
+            out.append({'metric': metric, 'date': day, 'value': round(total, 1)})
+        for metric, intervals in (('sleep_asleep', self._sleep_asleep),
+                                  ('sleep_in_bed', self._sleep_inbed)):
+            for day, hours in self._nightly_hours(intervals).items():
+                out.append({'metric': metric, 'date': day, 'value': round(hours, 2)})
+        return out
+
+
+def _scan_records(xml_bytes: bytes, workouts: list, daily: _DailyMetrics):
     """
-    Stream HR records and accumulate running sum/count/max per workout.
+    Single streaming pass over all <Record> elements:
+      - HR samples → running sum/count/max per workout (binary search on the
+        sorted workout windows);
+      - daily-metric record types → the _DailyMetrics accumulator (BIO-4).
     Workouts must be sorted by start_ts before calling.
     """
-    if not workouts:
-        return
-
     starts = [w['start_ts'] for w in workouts]
 
     ctx = iterparse(io.BytesIO(xml_bytes), events=('start', 'end'))
@@ -283,13 +402,15 @@ def _match_hr_data(xml_bytes: bytes, workouts: list):
     for event, elem in ctx:
         if event != 'end' or elem.tag != 'Record':
             continue
-        if elem.get('type') != 'HKQuantityTypeIdentifierHeartRate':
+        rtype = elem.get('type')
+        if rtype != 'HKQuantityTypeIdentifierHeartRate':
+            daily.add_record(rtype, elem)
             root.clear()
             continue
 
         val_str = elem.get('value')
         ts_str  = elem.get('startDate')
-        if not val_str or not ts_str:
+        if not val_str or not ts_str or not workouts:
             root.clear()
             continue
 
@@ -315,8 +436,9 @@ def _match_hr_data(xml_bytes: bytes, workouts: list):
 
 # ── DB insertion ───────────────────────────────────────────────────────────
 
-def _insert_workouts(workouts: list) -> tuple[int, int, int]:
-    conn = get_conn()
+def _insert_workouts(workouts: list, conn=None) -> tuple[int, int, int]:
+    if conn is None:
+        raise RuntimeError("_insert_workouts requires a conn (user-scoped)")
     added = skipped = failed = 0
 
     for w in workouts:
@@ -412,12 +534,12 @@ def _insert_workouts(workouts: list) -> tuple[int, int, int]:
 
 # ── Main worker ────────────────────────────────────────────────────────────
 
-def _run_import(file_bytes: bytes, filename: str):
+def _run_import(file_bytes: bytes, filename: str, user_id: str):
     try:
         # --- Unzip if needed -------------------------------------------------
         fn = filename.lower()
         if fn.endswith('.zip'):
-            _set(message='Extracting ZIP…')
+            _set(user_id, message='Extracting ZIP…')
             with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
                 xml_names = [n for n in zf.namelist() if n.endswith('export.xml')]
                 if not xml_names:
@@ -433,36 +555,46 @@ def _run_import(file_bytes: bytes, filename: str):
         logger.info(f"Apple Health XML size: {size_mb:.1f} MB")
 
         # --- Pass 1: workouts ------------------------------------------------
-        _set(message=f'Scanning workouts ({size_mb:.0f} MB)…')
+        _set(user_id, message=f'Scanning workouts ({size_mb:.0f} MB)…')
         workouts = _parse_workouts(xml_bytes)
         total = len(workouts)
         logger.info(f"Apple Health: found {total} workouts")
-        _set(message=f'Found {total} workouts — matching HR data…', parsed=total)
+        _set(user_id, message=f'Found {total} workouts — matching HR data…', parsed=total)
 
         # Sort by start time for binary search in pass 2
         workouts.sort(key=lambda w: w['start_ts'])
 
-        # --- Pass 2: HR matching ----------------------------------------------
-        _set(message=f'Matching heart rate data ({size_mb:.0f} MB, second pass)…')
-        _match_hr_data(xml_bytes, workouts)
+        # --- Pass 2: HR matching + daily health metrics (BIO-4) ---------------
+        _set(user_id, message=f'Matching heart rate + health data ({size_mb:.0f} MB, second pass)…')
+        daily = _DailyMetrics()
+        _scan_records(xml_bytes, workouts, daily)
 
         hr_matched = sum(1 for w in workouts if w['hr_count'] > 0)
         logger.info(f"Apple Health: HR data matched for {hr_matched}/{total} workouts")
 
         # --- Insert -----------------------------------------------------------
-        _set(message=f'Inserting {total} workouts into database…')
-        added, skipped, failed = _insert_workouts(workouts)
+        _set(user_id, message=f'Inserting {total} workouts into database…')
+        from backend.services.data_service import get_data_service
+        svc = get_data_service(user_id)
+        added, skipped, failed = _insert_workouts(workouts, conn=svc._conn())
+
+        metric_samples = daily.samples()
+        metric_days = 0
+        if metric_samples:
+            _set(user_id, message=f'Importing {len(metric_samples)} daily health metric samples…')
+            from backend.services import health_metrics_service
+            hm_result = health_metrics_service.upsert_metrics(svc._conn(), metric_samples)
+            metric_days = hm_result['added'] + hm_result['updated']
+            logger.info(f"Apple Health: daily metrics upserted {hm_result}")
 
         # Invalidate DataService caches so next page load reflects new data
-        try:
-            from backend.services.data_service import get_data_service
-            get_data_service()._invalidate_all_caches()
-        except Exception:
-            pass
+        svc._invalidate_all_caches()
 
         _set(
+            user_id,
             status='done',
-            message=f'Done — {added} added, {skipped} skipped (duplicates), {failed} failed',
+            message=f'Done — {added} added, {skipped} skipped (duplicates), {failed} failed, '
+                    f'{metric_days} daily health samples',
             added=added,
             skipped=skipped,
             failed=failed,
@@ -472,4 +604,4 @@ def _run_import(file_bytes: bytes, filename: str):
     except Exception as e:
         import traceback
         logger.error(f"Apple Health import error: {e}\n{traceback.format_exc()}")
-        _set(status='error', message=str(e), error=str(e))
+        _set(user_id, status='error', message=str(e), error=str(e))

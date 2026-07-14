@@ -34,7 +34,7 @@ export default function FastestSegments({ activity, segments, comparisonActiviti
       <div className="section-header">
         <span className="section-title">Fastest Segments</span>
         <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-          Best rolling window from 0.1mi splits
+          Best rolling window across your splits
         </span>
       </div>
 
@@ -76,7 +76,7 @@ export default function FastestSegments({ activity, segments, comparisonActiviti
               <th style={thStyle('right')}>Segment</th>
               {hasComparisons && comparisonActivities.map((ca, ci) => (
                 <th key={ca.id} style={thStyle('right', CHART_COLORS[ci])}>
-                  <div>{ca.name || ca.date}</div>
+                  <div>{ca.name || formatDate(ca.date)}</div>
                   <div style={{ fontSize: '0.65rem', fontWeight: 400, color: 'var(--text-muted)', marginTop: 2 }}>
                     {formatRelativeTo(ca.date, activity.date)}
                     {' · '}{formatDate(ca.date)}

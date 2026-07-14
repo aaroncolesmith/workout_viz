@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as d3 from 'd3';
 import { Search, RefreshCw, X, Info } from 'lucide-react';
 import _ from 'lodash';
+import { formatDate } from '../utils/format';
 
 /**
  * WorkoutPCA - High-performance scatter plot for PCA data.
@@ -371,7 +372,7 @@ const WorkoutPCA = ({
                     className="search-result-item"
                   >
                     <span className="result-name">{res.name}</span>
-                    <span className="result-meta">{res.date} • {res.distance_miles.toFixed(2)} mi</span>
+                    <span className="result-meta">{formatDate(res.date)} • {res.distance_miles.toFixed(2)} mi</span>
                   </button>
                 ))}
               </div>
@@ -408,7 +409,7 @@ const WorkoutPCA = ({
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
             <span className="header-badge-text">{hoveredNode.type}</span>
-            <span className="header-badge-text" style={{ opacity: 0.5 }}>{hoveredNode.date}</span>
+            <span className="header-badge-text" style={{ opacity: 0.5 }}>{formatDate(hoveredNode.date)}</span>
           </div>
           <h3>{hoveredNode.name}</h3>
           

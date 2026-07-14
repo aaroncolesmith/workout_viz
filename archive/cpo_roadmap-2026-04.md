@@ -1,9 +1,10 @@
 # CPO Product Strategy Brief: Workout Viz
 
 > **Audience**: Engineering team  
-> **Date**: 2026-04-13 (last updated 2026-04-17)
-> **Session model**: Engineering tasks run in the main session. Design/UI tasks run in a dedicated **Designer Session** (starts fresh, loads Stitch MCP + DESIGN.md, pulls screen code directly from the Stitch project).
+> **Date**: 2026-04-13 (last updated 2026-06-09)
 > **Purpose**: Define the product path from functional analytics tool to market-leading workout intelligence platform.
+>
+> **Note**: This document captures the original product strategy and audit as of April 2026. For the current forward-looking roadmap, see `ROADMAP.md` at the repo root.
 
 ## Implementation Status
 
@@ -18,15 +19,17 @@
 | "Why Was This Workout Good/Bad?" | 2 P0 | ✅ **Done** | Shipped as InsightCard (template-based, same outcome) |
 | Race Predictor | 2 P1 | ✅ **Done** | `race_predictor_service.py`, `GET /api/stats/predictions`, `RacePredictor.jsx` on dashboard; Riegel formula + form adjustment + confidence band |
 | Route Intelligence | Opp A | ✅ **Done** | `route_service.py`, greedy GPS clustering, `GET /api/routes`, `RoutesPage.jsx`; pace trend, sparklines, mini maps |
-| **Apple Health Import (XML)** | **SA-1** | ✅ **Done** | Two-pass iterparse, background thread, negative hash IDs, dedup vs Strava; `POST /api/import/apple-health`, 🍎 button in nav |
-| **Strength Training Support** | **SA-2** | ⬜ Next up | Proper detail view for strength/HIIT/yoga (no splits/map); HR-over-time chart; correct activity type badges |
-| **Swimming Analytics** | **SA-3** | ⬜ Backlog | SWOLF, pace/100m, lap breakdown (`swim_laps` table); swim-specific detail view |
-| **HealthKit Direct Sync** | **SA-4** | ⬜ Backlog — Designer Session dependency | Swift menu bar companion app; HealthKit entitlement; incremental sync to `POST /api/import/healthkit`; eliminates XML export flow |
-| **Premium Redesign** | **UX-1** | ⬜ Backlog — **Designer Session** | Stitch MCP loaded; pull screen code for Dashboard + Activity Detail; apply DESIGN.md token system (Manrope/Inter, monochrome surfaces, no-line rule) |
-| Training Narrative | Opp C | ⬜ Backlog | Season review; "Spotify Wrapped" for athletes; richer once strength + swim data in |
-| Shareable Workout Reports | 2 P1 | ⬜ Backlog | Frontend-only `html2canvas` capture; share a workout comparison or stat card |
-| Auto-rebuild routes on sync | Infra | ⬜ Backlog | Trigger route re-cluster after Apple Health import or Strava sync adds new activities |
-| Similarity Explorer cluster labels | UX | ⬜ Backlog | "Easy runs", "Tempo", "Long runs" derived from centroid analysis; makes PCA page answer a clear question |
+| Apple Health Import (XML) | SA-1 | ✅ **Done** | Two-pass iterparse, background thread, negative hash IDs, dedup vs Strava; `POST /api/import/apple-health` |
+| HealthKit Direct Sync (iOS) | SA-4 | ✅ **Done** | SwiftUI companion app in `ios/WorkoutViz/`; HealthKit entitlement; batch sync to `POST /api/import/healthkit`; throttled to once per 30 min on foreground |
+| Swimming Analytics | SA-3 | 🟡 **Substantially Done** | `swim_laps` table, `SwimLapChart.jsx`, best-set splits, stroke mapping. SWOLF computation and pace/100m display need verification. Swim-specific similarity weights not yet tuned. |
+| Strength Training Support | SA-2 | 🟡 **In Progress** | `StrengthOverview.jsx` exists. Detail view tab routing for no-GPS activities (no Splits/Segments/Map) needs wiring. HR-over-time chart and load display pending. |
+| Premium Redesign | UX-1 | ⬜ **Backlog** | Apply DESIGN.md token system: Manrope/Inter, monochrome surfaces (#131313 base), no-line rule, ghost borders |
+| Training Narrative | Opp C | ⬜ **Backlog** | Season review; "Spotify Wrapped" for athletes; richer once strength + swim parity is done |
+| Shareable Workout Reports | 2 P1 | ⬜ **Backlog** | Frontend-only `html2canvas` capture; share a workout comparison or stat card |
+| Auto-rebuild routes on sync | Infra | ⬜ **Backlog** | Trigger route re-cluster after Apple Health import or Strava sync adds new activities |
+| Similarity Explorer cluster labels | UX | ⬜ **Backlog** | "Easy runs", "Tempo", "Long runs" derived from centroid analysis; makes PCA page answer a clear question |
+| Goals and Targets | New | ⬜ **Backlog** | `user_goals` table; target distance/time/date; dashboard progress widget; forward-looking complement to backward-looking analytics |
+| Frontend test coverage (Vitest) | Infra | ⬜ **Backlog** | Tests for `formatPace`, `formatDistance`, `ZoomableContainer`, `WorkoutPCA` smoke tests |
 
 ---
 

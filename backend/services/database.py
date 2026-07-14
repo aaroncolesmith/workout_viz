@@ -1,70 +1,89 @@
 """
-database.py — SQLite connection pool and schema management.
+database.py — Multi-tenant SQLite/SQLCipher connection management.
 
-Uses a single WAL-mode SQLite database via a thread-local connection pool.
-WAL mode allows concurrent reads while a write is in progress, which matters
-because FastAPI runs handlers concurrently on a thread pool.
+Each per-user DB lives at DATA_DIR/users/<uid>/workouts.db and is opened
+with a user-specific SQLCipher key supplied by the caller.  The identity DB
+(users.db) is similarly encrypted.
 
-Design philosophy:
-  - All raw data (activities, splits, summaries) is stored in SQLite.
-  - Derived / computed columns (distance_miles, pace, rolling avgs, lat/lng)
-    are stored alongside raw data so queries can filter/sort on them.
-  - pandas is imported only in services that need analytics (PCA, similarity).
-  - The DataService presents the same public API as before — callers don't
-    know or care whether data comes from CSV or SQLite.
+Thread-local connection map: one connection per (thread, db_path) pair so
+that concurrent FastAPI workers don't share connections across users while
+still reusing connections within the same thread.
+
+WAL mode is kept from the original design; all other analytics SQL is unchanged.
 """
-import sqlite3
 import threading
 import logging
 from pathlib import Path
 from typing import Optional
 
+try:
+    from sqlcipher3 import dbapi2 as sqlcipher
+except ImportError:  # pragma: no cover — should never happen after install
+    raise ImportError("sqlcipher3 is required. Install it with: pip install sqlcipher3")
+
 logger = logging.getLogger(__name__)
 
-_DB_PATH: Optional[Path] = None
-_local = threading.local()  # thread-local connection storage
+# Thread-local map: db_path (str) -> sqlcipher.Connection
+_local = threading.local()
 
 
-def init_db(db_path: Path):
-    """Call once at startup to set the DB path and create schema."""
-    global _DB_PATH
-    _DB_PATH = db_path
-    _create_schema()
-    logger.info(f"SQLite DB initialised at {db_path}")
+# ── Connection lifecycle ──────────────────────────────────────────────────────
 
-
-def get_conn() -> sqlite3.Connection:
+def get_conn(db_path: Path, key: Optional[bytes] = None) -> sqlcipher.Connection:
     """
-    Return a thread-local SQLite connection.
-    Creates the connection on first call in each thread.
-    Connections are configured for WAL mode, foreign keys, and row_factory.
-    """
-    if _DB_PATH is None:
-        raise RuntimeError("Database not initialised — call init_db() first")
+    Return a thread-local SQLCipher connection for db_path.
 
-    conn = getattr(_local, "conn", None)
+    key: raw 32-byte key.  Omit only for unencrypted legacy migration work.
+    First call in each thread opens the connection; subsequent calls reuse it.
+    """
+    path_str = str(db_path)
+    conns: dict = getattr(_local, "conns", None)
+    if conns is None:
+        conns = {}
+        _local.conns = conns
+
+    conn = conns.get(path_str)
     if conn is None:
-        conn = sqlite3.connect(str(_DB_PATH), check_same_thread=False, timeout=30)
-        conn.row_factory = sqlite3.Row
+        conn = sqlcipher.connect(path_str, check_same_thread=False, timeout=30)
+        conn.row_factory = sqlcipher.Row
+
+        if key is not None:
+            hex_key = key.hex()
+            conn.execute(f"PRAGMA key = \"x'{hex_key}'\"")
+            conn.execute("PRAGMA cipher_compatibility = 4")
+
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
-        conn.execute("PRAGMA synchronous=NORMAL")  # faster than FULL, safe with WAL
-        conn.execute("PRAGMA cache_size=-32000")   # 32 MB page cache
-        _local.conn = conn
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA cache_size=-32000")
+        conns[path_str] = conn
+
     return conn
 
 
-def close_conn():
-    """Explicitly close the thread-local connection (used in tests)."""
-    conn = getattr(_local, "conn", None)
+def close_conn(db_path: Path):
+    """Close and evict the thread-local connection for db_path."""
+    path_str = str(db_path)
+    conns: dict = getattr(_local, "conns", None) or {}
+    conn = conns.pop(path_str, None)
     if conn:
-        conn.close()
-        _local.conn = None
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
-def _create_schema():
-    """Create all tables and indexes if they don't exist."""
-    conn = get_conn()
+def init_db(db_path: Path, key: Optional[bytes] = None):
+    """Create schema + run migrations for a per-user workouts DB."""
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = get_conn(db_path, key)
+    _create_schema(conn)
+    logger.info(f"Workouts DB initialised at {db_path}")
+
+
+# ── Schema ────────────────────────────────────────────────────────────────────
+
+def _create_schema(conn: sqlcipher.Connection):
     conn.executescript("""
         -- ── Activities ────────────────────────────────────────────────────────
         CREATE TABLE IF NOT EXISTS activities (
@@ -129,7 +148,9 @@ def _create_schema():
             end_lng                     REAL,
             map_polyline                TEXT,
             rolling_avg_speed           REAL,
-            rolling_avg_distance        REAL
+            rolling_avg_distance        REAL,
+            source                      TEXT DEFAULT 'strava',
+            pool_length_meters          REAL
         );
 
         -- ── Splits ───────────────────────────────────────────────────────────
@@ -137,7 +158,7 @@ def _create_schema():
             id                          INTEGER PRIMARY KEY AUTOINCREMENT,
             activity_id                 INTEGER NOT NULL,
             activity_name               TEXT,
-            split_number                REAL,          -- 0.1-mile bucket number
+            split_number                REAL,
             time_seconds                REAL,
             time_minutes                TEXT,
             max_heartrate               REAL,
@@ -189,34 +210,34 @@ def _create_schema():
             updated_at                  TEXT DEFAULT CURRENT_TIMESTAMP
         );
 
-        -- ── PR events (personal records detected from summaries) ──────────────
+        -- ── PR events ────────────────────────────────────────────────────────
         CREATE TABLE IF NOT EXISTS pr_events (
             id                          INTEGER PRIMARY KEY AUTOINCREMENT,
             activity_id                 INTEGER NOT NULL,
             activity_name               TEXT,
             activity_type               TEXT,
-            date                        TEXT,          -- YYYY-MM-DD
-            distance_label              TEXT,          -- "5K", "1 Mile", etc.
+            date                        TEXT,
+            distance_label              TEXT,
             distance_miles              REAL,
             time_seconds                REAL,
             time_str                    TEXT,
             pace_str                    TEXT,
-            previous_best_seconds       REAL,          -- NULL if first effort ever
+            previous_best_seconds       REAL,
             detected_at                 TEXT DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (activity_id) REFERENCES activities(id) ON DELETE CASCADE
         );
 
-        -- ── Routes (auto-detected clusters of same-course activities) ─────────
+        -- ── Routes ───────────────────────────────────────────────────────────
         CREATE TABLE IF NOT EXISTS routes (
             id                      INTEGER PRIMARY KEY AUTOINCREMENT,
             name                    TEXT NOT NULL,
             activity_type           TEXT NOT NULL DEFAULT 'Run',
-            representative_polyline TEXT,          -- polyline of the most recent run
+            representative_polyline TEXT,
             avg_distance_miles      REAL,
             activity_count          INTEGER DEFAULT 0,
-            centroid_lat            REAL,          -- avg start lat for geo bucketing
+            centroid_lat            REAL,
             centroid_lng            REAL,
-            best_time_seconds       REAL,          -- best segment time (if splits exist)
+            best_time_seconds       REAL,
             created_at              TEXT DEFAULT CURRENT_TIMESTAMP,
             updated_at              TEXT DEFAULT CURRENT_TIMESTAMP
         );
@@ -230,116 +251,87 @@ def _create_schema():
             FOREIGN KEY (activity_id) REFERENCES activities(id) ON DELETE CASCADE
         );
 
-        -- ── Training blocks (user-defined training phases) ───────────────────
+        -- ── Training blocks ───────────────────────────────────────────────────
         CREATE TABLE IF NOT EXISTS training_blocks (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             name        TEXT NOT NULL,
-            block_type  TEXT NOT NULL DEFAULT 'base',  -- base | build | peak | taper | race
-            start_date  TEXT NOT NULL,  -- YYYY-MM-DD
-            end_date    TEXT NOT NULL,  -- YYYY-MM-DD
+            block_type  TEXT NOT NULL DEFAULT 'base',
+            start_date  TEXT NOT NULL,
+            end_date    TEXT NOT NULL,
             notes       TEXT,
             created_at  TEXT DEFAULT CURRENT_TIMESTAMP
         );
 
-        -- ── Source tracking (additive; safe to run on existing DBs) ────────
-        -- Handled via _migrate_schema() below; CREATE TABLE above won't add
-        -- this to existing databases.
+        -- ── Daily health metrics (BIO-1) ─────────────────────────────────────
+        CREATE TABLE IF NOT EXISTS health_metrics (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            metric              TEXT NOT NULL,
+            date                TEXT NOT NULL,          -- YYYY-MM-DD (user-local day)
+            value               REAL NOT NULL,
+            min_value           REAL,
+            max_value           REAL,
+            source_id           TEXT,
+            updated_at          TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (metric, date)
+        );
 
-        -- ── Indexes ──────────────────────────────────────────────────────────
-        CREATE INDEX IF NOT EXISTS idx_activities_type
-            ON activities(type);
-        CREATE INDEX IF NOT EXISTS idx_activities_date
-            ON activities(date DESC);
-        CREATE INDEX IF NOT EXISTS idx_activities_start_date
-            ON activities(start_date DESC);
-        CREATE INDEX IF NOT EXISTS idx_splits_activity
-            ON splits(activity_id);
-        CREATE INDEX IF NOT EXISTS idx_summaries_activity
-            ON summaries(activity_id);
-        CREATE INDEX IF NOT EXISTS idx_sync_log_started_at
-            ON sync_log(started_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_sync_log_activity
-            ON sync_log(activity_id);
-        CREATE INDEX IF NOT EXISTS idx_pr_events_date
-            ON pr_events(date DESC);
-        CREATE INDEX IF NOT EXISTS idx_pr_events_activity
-            ON pr_events(activity_id);
-        CREATE INDEX IF NOT EXISTS idx_training_blocks_dates
-            ON training_blocks(start_date, end_date);
-        CREATE INDEX IF NOT EXISTS idx_route_activities_route
-            ON route_activities(route_id);
-        CREATE INDEX IF NOT EXISTS idx_route_activities_activity
-            ON route_activities(activity_id);
-        CREATE INDEX IF NOT EXISTS idx_routes_type
-            ON routes(activity_type);
-
-        -- ── Swim laps (per-lap breakdown for pool swim activities) ────────────
+        -- ── Swim laps ────────────────────────────────────────────────────────
         CREATE TABLE IF NOT EXISTS swim_laps (
             id                  INTEGER PRIMARY KEY AUTOINCREMENT,
             activity_id         INTEGER NOT NULL,
             lap_number          INTEGER NOT NULL,
             distance_meters     REAL,
             duration_seconds    REAL NOT NULL,
-            stroke_type         TEXT,   -- freestyle|backstroke|breaststroke|butterfly|kickboard|mixed|rest|null
+            stroke_type         TEXT,
             stroke_count        INTEGER,
             avg_heartrate       REAL,
             is_rest             INTEGER DEFAULT 0,
             FOREIGN KEY (activity_id) REFERENCES activities(id) ON DELETE CASCADE
         );
-        CREATE INDEX IF NOT EXISTS idx_swim_laps_activity
-            ON swim_laps(activity_id);
+
+        -- ── Indexes ──────────────────────────────────────────────────────────
+        CREATE INDEX IF NOT EXISTS idx_activities_type         ON activities(type);
+        CREATE INDEX IF NOT EXISTS idx_activities_date         ON activities(date DESC);
+        CREATE INDEX IF NOT EXISTS idx_activities_start_date   ON activities(start_date DESC);
+        CREATE INDEX IF NOT EXISTS idx_splits_activity         ON splits(activity_id);
+        CREATE INDEX IF NOT EXISTS idx_summaries_activity      ON summaries(activity_id);
+        CREATE INDEX IF NOT EXISTS idx_sync_log_started_at     ON sync_log(started_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_sync_log_activity       ON sync_log(activity_id);
+        CREATE INDEX IF NOT EXISTS idx_pr_events_date          ON pr_events(date DESC);
+        CREATE INDEX IF NOT EXISTS idx_pr_events_activity      ON pr_events(activity_id);
+        CREATE INDEX IF NOT EXISTS idx_training_blocks_dates   ON training_blocks(start_date, end_date);
+        CREATE INDEX IF NOT EXISTS idx_route_activities_route  ON route_activities(route_id);
+        CREATE INDEX IF NOT EXISTS idx_route_activities_activity ON route_activities(activity_id);
+        CREATE INDEX IF NOT EXISTS idx_routes_type             ON routes(activity_type);
+        CREATE INDEX IF NOT EXISTS idx_swim_laps_activity      ON swim_laps(activity_id);
     """)
     conn.commit()
     _migrate_schema(conn)
 
 
-def _migrate_schema(conn: sqlite3.Connection):
-    """
-    Additive schema migrations — safe to run on every startup.
-    Each migration is idempotent (catches OperationalError for 'duplicate column').
-    """
-    migrations = [
-        # 001 — track data source (strava | apple_health | manual)
-        "ALTER TABLE activities ADD COLUMN source TEXT DEFAULT 'strava'",
-        # 002 — pool length for swim activities (meters)
-        "ALTER TABLE activities ADD COLUMN pool_length_meters REAL",
-    ]
-    for sql in migrations:
-        try:
-            conn.execute(sql)
-            conn.commit()
-        except sqlite3.OperationalError:
-            pass  # column already exists — safe to ignore
-
+def _migrate_schema(conn: sqlcipher.Connection):
+    """Additive migrations — safe to re-run on every open."""
     _migrate_apple_health_ids(conn)
     _dedupe_apple_health_activities(conn)
-    _backfill_extended_pr_distances(conn)
     _migrate_swim_stroke_correction(conn)
+    _migrate_add_hk_source_id(conn)
+    # _backfill_extended_pr_distances is triggered per-user from DataService.__init__
 
 
-# JS Number.MAX_SAFE_INTEGER = 2^53 - 1 = 9,007,199,254,740,991
+# ── Migrations (preserved verbatim from original) ────────────────────────────
+
 _JS_SAFE_INT = (1 << 53) - 1
 
 
-def _migrate_apple_health_ids(conn: sqlite3.Connection):
-    """
-    Older _ah_id / _hk_id used 7-8 bytes, producing IDs that exceed JS's
-    MAX_SAFE_INTEGER (2^53). When the frontend parses them via JSON they
-    silently round to the nearest representable float, so subsequent API
-    lookups miss the row. This migration regenerates any out-of-range
-    Apple Health / HealthKit IDs using the new 6-byte algorithm.
-    """
+def _migrate_apple_health_ids(conn: sqlcipher.Connection):
     import hashlib
-
     rows = conn.execute(
         "SELECT id, type, start_date FROM activities "
         "WHERE source = 'apple_health' AND ABS(id) > ?",
         (_JS_SAFE_INT,)
     ).fetchall()
-
     if not rows:
         return
-
     logger.info(f"Migrating {len(rows)} Apple Health IDs to fit in JS safe integer range")
     migrated = 0
     for row in rows:
@@ -353,30 +345,18 @@ def _migrate_apple_health_ids(conn: sqlite3.Connection):
             continue
         try:
             conn.execute("UPDATE activities SET id = ? WHERE id = ?", (new_id, old_id))
-            # Cascade the new ID into child tables that reference activity_id
             for tbl in ("splits", "summaries", "pr_events", "route_activities"):
                 conn.execute(f"UPDATE {tbl} SET activity_id = ? WHERE activity_id = ?",
                              (new_id, old_id))
             migrated += 1
-        except sqlite3.IntegrityError as e:
+        except Exception as e:
             logger.warning(f"ID collision for {old_id} → {new_id}: {e}")
     conn.commit()
-    logger.info(f"Migrated {migrated} Apple Health activity IDs")
+    if migrated:
+        logger.info(f"Migrated {migrated} Apple Health activity IDs")
 
 
-def _dedupe_apple_health_activities(conn: sqlite3.Connection):
-    """
-    Merge duplicate Apple Health activities that share the same start_time
-    and type. Caused by two earlier code paths:
-      - XML import used `hash(type + start_date_iso)` for IDs
-      - HealthKit sync used `hash('hk:' + workout UUID)` for IDs
-    Same workout, different IDs → two rows each.
-
-    Rule: group by (type, start_date bucket = minute). For each group,
-    keep the row with map_polyline populated (streams already processed);
-    ties broken by latest start_date. Delete the rest — cascade drops
-    their child splits/summaries/pr_events.
-    """
+def _dedupe_apple_health_activities(conn: sqlcipher.Connection):
     groups = conn.execute(
         """
         SELECT type, strftime('%Y-%m-%d %H:%M', start_date) AS bucket,
@@ -389,126 +369,38 @@ def _dedupe_apple_health_activities(conn: sqlite3.Connection):
         HAVING COUNT(*) > 1
         """
     ).fetchall()
-
     if not groups:
         return
-
     total_dropped = 0
     for g in groups:
         ids = [int(x) for x in g["ids"].split(",") if x]
         rows = conn.execute(
-            f"SELECT id, map_polyline, start_date FROM activities WHERE id IN ({','.join(['?']*len(ids))})",
+            f"SELECT id, map_polyline, start_date FROM activities "
+            f"WHERE id IN ({','.join(['?']*len(ids))})",
             ids
         ).fetchall()
 
         def sort_key(r):
-            has_poly = 1 if r["map_polyline"] else 0
-            return (has_poly, r["start_date"] or "")
+            return (1 if r["map_polyline"] else 0, r["start_date"] or "")
 
         rows_sorted = sorted(rows, key=sort_key, reverse=True)
-        winner = rows_sorted[0]["id"]
         losers = [r["id"] for r in rows_sorted[1:]]
-
         for loser in losers:
             for tbl in ("splits", "summaries", "pr_events", "route_activities"):
                 conn.execute(f"DELETE FROM {tbl} WHERE activity_id = ?", (loser,))
             conn.execute("DELETE FROM activities WHERE id = ?", (loser,))
             total_dropped += 1
-
     conn.commit()
     if total_dropped:
-        logger.info(f"Deduped {total_dropped} duplicate Apple Health activities across {len(groups)} groups")
+        logger.info(f"Deduped {total_dropped} duplicate Apple Health activities")
 
 
-_EXTENDED_PR_FLAG = "extended_pr_distances_backfilled"
-
-
-def _backfill_extended_pr_distances(conn: sqlite3.Connection):
-    """
-    Recompute summaries + PR events for every activity with splits, so the
-    newly-added target distances (1/4 Mi, 1/2 Mi, 25 Mi, 50 Mi) show up
-    for historical data.
-
-    Runs in a daemon thread — startup returns in milliseconds so Railway's
-    healthcheck passes while the backfill proceeds in the background.
-    Idempotent: compute_and_save_summaries deletes and re-inserts, so if
-    the container is killed mid-run the next restart just starts over
-    (we haven't set the done flag yet).
-    """
-    existing = conn.execute(
-        "SELECT value FROM user_settings WHERE key = ?", (_EXTENDED_PR_FLAG,)
-    ).fetchone()
-    if existing and existing["value"] == "done":
-        return
-
-    import threading
-    threading.Thread(
-        target=_run_extended_pr_backfill,
-        name="extended-pr-backfill",
-        daemon=True,
-    ).start()
-    logger.info("Extended PR distances backfill scheduled in background")
-
-
-def _run_extended_pr_backfill():
-    """Background worker — has its own thread-local SQLite connection."""
-    try:
-        conn = get_conn()
-
-        ids = [r["activity_id"] for r in conn.execute(
-            "SELECT DISTINCT activity_id FROM splits"
-        ).fetchall()]
-        total = len(ids)
-        if total == 0:
-            conn.execute(
-                "INSERT OR REPLACE INTO user_settings (key, value) VALUES (?, 'done')",
-                (_EXTENDED_PR_FLAG,)
-            )
-            conn.commit()
-            logger.info("Extended PR backfill: no activities with splits; marked done")
-            return
-
-        logger.info(f"Extended PR backfill starting: {total} activities")
-
-        from backend.services.data_service import get_data_service
-        svc = get_data_service()
-
-        done = failed = 0
-        for aid in ids:
-            try:
-                svc.compute_and_save_summaries(aid)
-                done += 1
-            except Exception as e:
-                failed += 1
-                logger.warning(f"PR backfill failed for activity {aid}: {e}")
-
-            if (done + failed) % 50 == 0:
-                logger.info(f"Extended PR backfill: {done + failed}/{total} "
-                            f"(ok={done}, fail={failed})")
-
-        conn.execute(
-            "INSERT OR REPLACE INTO user_settings (key, value) VALUES (?, 'done')",
-            (_EXTENDED_PR_FLAG,)
-        )
-        conn.commit()
-        logger.info(f"Extended PR backfill complete: {done} ok, {failed} failed")
-    except Exception:
-        logger.exception("Extended PR backfill crashed")
-
-
-def _migrate_swim_stroke_correction(conn: sqlite3.Connection):
-    """
-    Correct swim stroke types that were stored with an off-by-one mapping.
-    Apple's HKSwimmingStrokeStyle enum starts at 0=unknown, 1=mixed, 2=freestyle, ...
-    The original code mapped 0→mixed, 1→freestyle, 2→backstroke, etc. (one step too early).
-    Uses two-pass rename to avoid overwriting values mid-migration.
-    """
+def _migrate_swim_stroke_correction(conn: sqlcipher.Connection):
     done = conn.execute(
         "SELECT value FROM user_settings WHERE key = 'migration_stroke_fix_v1'"
     ).fetchone()
     if done:
         return
-
     conn.execute("""
         UPDATE swim_laps SET stroke_type = CASE stroke_type
           WHEN 'mixed'        THEN '_m_'
@@ -536,4 +428,14 @@ def _migrate_swim_stroke_correction(conn: sqlite3.Connection):
         "VALUES ('migration_stroke_fix_v1', 'done', CURRENT_TIMESTAMP)"
     )
     conn.commit()
-    logger.info("Applied swim stroke style correction (off-by-one fix)")
+    logger.info("Applied swim stroke style correction")
+
+
+def _migrate_add_hk_source_id(conn: sqlcipher.Connection):
+    """Add hk_source_id column for exact-match HealthKit deletions (HK-4)."""
+    try:
+        conn.execute("ALTER TABLE activities ADD COLUMN hk_source_id TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_activities_hk_source ON activities(hk_source_id)")
+        conn.commit()
+    except Exception:
+        pass  # column already exists

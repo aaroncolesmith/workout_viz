@@ -15,7 +15,10 @@ def test_data_service_get_activities_filters_and_paginates(seeded_backend):
 
 
 def test_find_similar_activities_returns_closest_run_first(seeded_backend):
-    similar = seeded_backend["similarity_service_module"].find_similar_activities(101, top_n=2)
+    service = seeded_backend["service"]
+    similar = seeded_backend["similarity_service_module"].find_similar_activities(
+        101, top_n=2, data_service=service
+    )
 
     assert len(similar) == 2
     assert similar[0]["activity"]["id"] == 102
@@ -24,7 +27,10 @@ def test_find_similar_activities_returns_closest_run_first(seeded_backend):
 
 
 def test_get_activity_pca_returns_coordinates_for_run_activities(seeded_backend):
-    pca = seeded_backend["pca_service_module"].get_activity_pca(activity_type="Run")
+    service = seeded_backend["service"]
+    pca = seeded_backend["pca_service_module"].get_activity_pca(
+        activity_type="Run", data_service=service
+    )
 
     assert len(pca["activities"]) == 3
     assert len(pca["loadings"]) == 6

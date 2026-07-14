@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { LineChart, Line, ResponsiveContainer, Tooltip, XAxis } from 'recharts';
+import { LineChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid, Cell, Scatter, ComposedChart } from 'recharts';
 import { MapContainer, TileLayer, Polyline } from 'react-leaflet';
 import polyline from 'polyline';
 import 'leaflet/dist/leaflet.css';
@@ -211,25 +211,8 @@ function RouteDetail({ routeId, color, onClose }) {
         </div>
       </div>
 
-      {/* Pace over time chart */}
-      {route.pace_spark?.length > 2 && (
-        <div className="glass-card" style={{ padding: 'var(--space-md)', marginBottom: 'var(--space-lg)' }}>
-          <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', marginBottom: 8 }}>Pace Over Time</div>
-          <ResponsiveContainer width="100%" height={80}>
-            <LineChart data={route.pace_spark}>
-              <Line type="monotone" dataKey="pace" stroke={color} strokeWidth={2} dot={false} />
-              <Tooltip
-                formatter={v => {
-                  const m = Math.floor(v); const s = Math.round((v - m) * 60);
-                  return [`${m}:${s.toString().padStart(2,'0')}/mi`, 'Pace'];
-                }}
-                labelFormatter={(_l, payload) => payload?.[0]?.payload?.date ? formatDate(payload[0].payload.date) : ''}
-                contentStyle={{ background: '#0a0e1a', border: '1px solid rgba(255,255,255,0.1)', fontSize: '0.7rem' }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      )}
+      {/* Trend over attempts (CMP-6): time per attempt + HR strip */}
+      <AttemptsTrend activities={activities} color={color} bestId={bestActivity?.id} />
 
       {/* Activity list */}
       <div>
@@ -264,6 +247,85 @@ function RouteDetail({ routeId, color, onClose }) {
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Trend over attempts (CMP-6) ───────────────────────────────────────────────
+// Time per attempt (lower = faster) with the best attempt highlighted, plus a
+// separate HR strip below — one axis per chart, never a dual axis.
+function AttemptsTrend({ activities, color, bestId }) {
+  const attempts = useMemo(
+    () => [...activities]
+      .filter(a => a.moving_time_min)
+      .sort((a, b) => (a.date || '').localeCompare(b.date || '')),
+    [activities]
+  );
+  if (attempts.length < 3) return null;
+
+  const hasHR = attempts.some(a => a.average_heartrate);
+  const fmtMin = (m) => {
+    if (m >= 60) { const h = Math.floor(m / 60); return `${h}h ${Math.round(m % 60)}m`; }
+    const mm = Math.floor(m); const ss = Math.round((m - mm) * 60);
+    return `${mm}:${String(ss).padStart(2, '0')}`;
+  };
+  const tooltip = (
+    <Tooltip
+      content={({ active, payload }) => {
+        if (!active || !payload?.length) return null;
+        const d = payload[0]?.payload;
+        if (!d) return null;
+        return (
+          <div style={{ background: '#0a0e1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, padding: '6px 10px', fontSize: '0.7rem' }}>
+            <div style={{ fontWeight: 600, marginBottom: 2 }}>{formatDate(d.date)}{d.id === bestId ? ' ★' : ''}</div>
+            <div style={{ color }}>{fmtMin(d.moving_time_min)} · {d.pace_str}/mi</div>
+            {d.average_heartrate && <div style={{ color: '#f472b6' }}>{d.average_heartrate} bpm</div>}
+          </div>
+        );
+      }}
+    />
+  );
+
+  return (
+    <div className="glass-card" style={{ padding: 'var(--space-md)', marginBottom: 'var(--space-lg)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+        <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>
+          Time per Attempt
+        </div>
+        <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', opacity: 0.7 }}>
+          lower = faster · <span style={{ color: '#fbbf24' }}>★ best</span>
+        </div>
+      </div>
+      <ResponsiveContainer width="100%" height={150}>
+        <ComposedChart data={attempts} margin={{ top: 6, right: 8, bottom: 0, left: -8 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+          <XAxis dataKey="date" tick={{ fontSize: 9 }} tickFormatter={v => v ? v.slice(5) : ''} minTickGap={24} />
+          <YAxis domain={['auto', 'auto']} tick={{ fontSize: 9 }} tickFormatter={fmtMin} width={52} />
+          {tooltip}
+          <Line type="monotone" dataKey="moving_time_min" stroke={color} strokeWidth={2} dot={false} isAnimationActive={false} />
+          <Scatter dataKey="moving_time_min" isAnimationActive={false}>
+            {attempts.map(a => (
+              <Cell key={a.id} fill={a.id === bestId ? '#fbbf24' : color} r={a.id === bestId ? 5 : 3} />
+            ))}
+          </Scatter>
+        </ComposedChart>
+      </ResponsiveContainer>
+
+      {hasHR && (
+        <>
+          <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', margin: '10px 0 4px' }}>
+            Avg HR per Attempt
+          </div>
+          <ResponsiveContainer width="100%" height={60}>
+            <ComposedChart data={attempts} margin={{ top: 4, right: 8, bottom: 0, left: -8 }}>
+              <XAxis dataKey="date" hide />
+              <YAxis domain={['auto', 'auto']} tick={{ fontSize: 9 }} width={52} />
+              {tooltip}
+              <Line type="monotone" dataKey="average_heartrate" stroke="#f472b6" strokeWidth={1.5} dot={{ r: 2, fill: '#f472b6' }} isAnimationActive={false} connectNulls />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </>
+      )}
     </div>
   );
 }

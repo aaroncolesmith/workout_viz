@@ -11,7 +11,6 @@ import math
 import logging
 from datetime import date, timedelta
 from typing import Optional
-from backend.services.database import get_conn
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +109,7 @@ def _get_ctl_trend(conn, days: int = 28) -> Optional[float]:
 
 # ── Main entry point ─────────────────────────────────────────────────────────
 
-def get_race_predictions(activity_type: str = "Run", days: int = 90) -> list:
+def get_race_predictions(activity_type: str = "Run", days: int = 90, *, conn) -> list:
     """
     Return race time predictions for standard distances.
 
@@ -121,7 +120,6 @@ def get_race_predictions(activity_type: str = "Run", days: int = 90) -> list:
       4. Apply a small form adjustment (±2%) based on recent load trend.
       5. Return prediction with confidence, source attribution, and range.
     """
-    conn = get_conn()
     cutoff = (date.today() - timedelta(days=days)).isoformat()
 
     # Fetch all best efforts within the window, grouped by distance

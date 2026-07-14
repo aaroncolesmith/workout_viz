@@ -30,7 +30,6 @@ from typing import Optional
 import polyline as polyline_lib
 import numpy as np
 
-from backend.services.database import get_conn
 
 logger = logging.getLogger(__name__)
 
@@ -115,13 +114,14 @@ def build_route_clusters(
     activity_type: str = 'Run',
     threshold: float = THRESHOLD,
     min_activities: int = MIN_ACTIVITIES,
+    *,
+    conn,
 ) -> dict:
     """
     Cluster all outdoor activities of `activity_type` by GPS route.
     Rebuilds from scratch; writes results to `routes` + `route_activities` tables.
     Returns a summary dict.
     """
-    conn = get_conn()
 
     # Load activities with polylines (exclude trainer / manual / no polyline)
     rows = conn.execute("""
@@ -278,9 +278,8 @@ def _store_representative_polylines(conn, acts, clusters):
 
 # ── Query helpers ─────────────────────────────────────────────────────────────
 
-def get_routes(activity_type: str = 'Run') -> list:
+def get_routes(activity_type: str = 'Run', *, conn) -> list:
     """Return all routes with aggregate stats and recent pace trend."""
-    conn = get_conn()
 
     routes = conn.execute("""
         SELECT id, name, activity_type, representative_polyline,
@@ -364,9 +363,8 @@ def get_routes(activity_type: str = 'Run') -> list:
     return result
 
 
-def get_route_activities(route_id: int) -> list:
+def get_route_activities(route_id: int, *, conn) -> list:
     """Return all activities on a route, ordered by date."""
-    conn = get_conn()
     rows = conn.execute("""
         SELECT
             a.id, a.name, a.date, a.distance_miles, a.pace,
@@ -398,12 +396,12 @@ def get_route_activities(route_id: int) -> list:
         "average_heartrate": round(float(r["average_heartrate"]), 1) if r["average_heartrate"] else None,
         "total_elevation_gain": float(r["total_elevation_gain"] or 0),
         "duration_str":     _fmt_time(r["moving_time_min"]),
+        "moving_time_min":  round(float(r["moving_time_min"]), 2) if r["moving_time_min"] else None,
         "similarity_score": round(float(r["similarity_score"] or 0), 3),
     } for r in rows]
 
 
-def rename_route(route_id: int, name: str) -> bool:
-    conn = get_conn()
+def rename_route(route_id: int, name: str, *, conn) -> bool:
     result = conn.execute(
         "UPDATE routes SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         (name, route_id)
@@ -412,9 +410,8 @@ def rename_route(route_id: int, name: str) -> bool:
     return result.rowcount > 0
 
 
-def get_build_status(activity_type: str = 'Run') -> dict:
+def get_build_status(activity_type: str = 'Run', *, conn) -> dict:
     """Return how many routes exist and when they were last built."""
-    conn = get_conn()
     row = conn.execute("""
         SELECT COUNT(*) as cnt, MAX(created_at) as last_built
         FROM routes WHERE activity_type = ?

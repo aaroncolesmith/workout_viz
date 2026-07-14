@@ -15,6 +15,7 @@ import SplitHRChart from '../components/SplitHRChart';
 import FastestSegments from '../components/FastestSegments';
 import SimilarWorkoutsPanel from '../components/SimilarWorkoutsPanel';
 import InsightCard from '../components/InsightCard';
+import ComparisonCard from '../components/ComparisonCard';
 import SwimLapChart from '../components/SwimLapChart';
 import { useComparisonState } from '../hooks/useComparisonState';
 import { useZoomState } from '../hooks/useZoomState';
@@ -225,44 +226,81 @@ export default function ActivityDetail() {
   }, [activity, comparisonActivities]);
 
   const splitChartData = useMemo(() => {
-    const allSplits = [splits, ...Object.values(comparisonSplitsMap)];
-    const maxLen = Math.max(0, ...allSplits.map(s => s.length));
-    if (maxLen === 0) return [];
-    
-    const data = [];
-    
-    // Track cumulative time for each activity series
-    const cumTimes = {
-      primary: 0,
-      ...Object.fromEntries(comparisonActivities.map(ca => [ca.id, 0]))
+    // Rows are aligned by DISTANCE, not array index — activities can have
+    // different split grains (legacy 0.1 mi vs newer finer splits), so the
+    // i-th split of two runs may sit at different mile marks.
+    const splitMile = (s, fallback) => Number(s?.total_distance_miles) || fallback;
+
+    // Per-comparison cursor into its own (sorted) splits.
+    const compState = Object.fromEntries(comparisonActivities.map(ca => [
+      ca.id, { splits: comparisonSplitsMap[ca.id] || [], ptr: 0, cumTime: 0 },
+    ]));
+
+    // Consume comparison splits up to `uptoMile`; returns the last one taken.
+    const advanceComp = (st, uptoMile) => {
+      let matched = null;
+      let grain = null;
+      while (st.ptr < st.splits.length) {
+        const c = st.splits[st.ptr];
+        const cMile = splitMile(c, (st.ptr + 1) * 0.1);
+        if (cMile > uptoMile) break;
+        st.cumTime += (c.time_seconds || 0);
+        const prev = st.ptr > 0 ? splitMile(st.splits[st.ptr - 1], st.ptr * 0.1) : 0;
+        grain = Math.max(cMile - prev, 0.001);
+        matched = c;
+        st.ptr += 1;
+      }
+      return { matched, grain };
     };
-    
-    for (let i = 0; i < maxLen; i++) {
-      const s = splits[i];
-      if (s) cumTimes.primary += (s.time_seconds || 0);
-      
+
+    const data = [];
+    let cumPrimary = 0;
+    let prevMile = 0;
+
+    const pushRow = (mile, s, grain) => {
+      if (s) cumPrimary += (s.time_seconds || 0);
       const row = {
-        index: i,
-        mile: ((i + 1) * 0.1).toFixed(1),
-        time: cumTimes.primary,
-        time_formatted: formatTime(cumTimes.primary),
+        index: data.length,
+        mile: mile.toFixed(2),
+        time: s ? cumPrimary : null,
+        time_formatted: s ? formatTime(cumPrimary) : null,
         pace_seconds: s?.time_seconds,
-        pace_per_mile: s?.time_seconds > 0 ? (s.time_seconds / 60) * 10 : null,
+        pace_per_mile: s?.time_seconds > 0 ? (s.time_seconds / 60) / grain : null,
         avg_hr: s?.avg_heartrate,
         max_hr: s?.max_heartrate,
       };
-      
       comparisonActivities.forEach(ca => {
-        const cs = comparisonSplitsMap[ca.id]?.[i];
-        if (cs) cumTimes[ca.id] = (cumTimes[ca.id] || 0) + (cs.time_seconds || 0);
-        
-        row[`comp_${ca.id}_pace`] = cs?.time_seconds > 0 ? (cs.time_seconds / 60) * 10 : null;
-        row[`comp_${ca.id}_hr`] = cs?.avg_heartrate;
-        row[`comp_${ca.id}_time`] = cumTimes[ca.id];
+        const st = compState[ca.id];
+        const { matched, grain: cGrain } = advanceComp(st, mile + grain / 2);
+        row[`comp_${ca.id}_pace`] = matched?.time_seconds > 0 ? (matched.time_seconds / 60) / cGrain : null;
+        row[`comp_${ca.id}_hr`] = matched?.avg_heartrate ?? null;
+        row[`comp_${ca.id}_time`] = matched ? st.cumTime : null;
       });
-      
       data.push(row);
+    };
+
+    for (let i = 0; i < splits.length; i++) {
+      const s = splits[i];
+      const mile = splitMile(s, prevMile + 0.1);
+      pushRow(mile, s, Math.max(mile - prevMile, 0.001));
+      prevMile = mile;
     }
+
+    // Comparison activities longer than the primary: keep their tails.
+    for (;;) {
+      const pending = comparisonActivities.filter(ca => {
+        const st = compState[ca.id];
+        return st.ptr < st.splits.length;
+      });
+      if (!pending.length) break;
+      const nextMile = Math.min(...pending.map(ca => {
+        const st = compState[ca.id];
+        return splitMile(st.splits[st.ptr], prevMile + 0.1);
+      }));
+      pushRow(nextMile, null, Math.max(nextMile - prevMile, 0.001));
+      prevMile = nextMile;
+    }
+
     return data;
   }, [splits, comparisonSplitsMap, comparisonActivities]);
   const paceZoom = useZoomState({ data: splitChartData, xAxisType });
@@ -358,6 +396,9 @@ export default function ActivityDetail() {
           ══════════════════════════════════════════════════════ */}
       {activeTab === 'overview' && (
         <div>
+          {/* The post-workout verdict — auto-selected comparison (CMP-4) */}
+          <ComparisonCard activityId={Number(id)} />
+
           {isStrength ? (
             /* ── Strength / indoor workout overview ── */
             <div style={{ marginBottom: 'var(--space-xl)' }}>

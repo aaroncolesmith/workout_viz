@@ -1,12 +1,39 @@
 /**
  * API client for Workout Viz backend.
- * All requests go through the Vite proxy → FastAPI on :8001
+ * All requests go through the Vite proxy → FastAPI on :8001.
+ *
+ * Auth: reads the session JWT from localStorage (key: volken_session_token),
+ * injected there by the iOS WKWebView before the page loads.  On 401 the
+ * native bridge is called so the iOS auth gate can re-appear.
  */
 
 const BASE = '/api';
+const TOKEN_KEY = 'volken_session_token';
+
+function getToken() {
+  try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
+}
+
+function authHeaders() {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+function handleUnauthorized() {
+  try {
+    window.WorkoutVizNative?.unauthorized?.();
+  } catch {
+    // Running in browser dev — no native bridge; ignore.
+  }
+}
 
 async function fetchJSON(url, options = {}) {
-  const res = await fetch(url, options);
+  const headers = { ...authHeaders(), ...(options.headers || {}) };
+  const res = await fetch(url, { ...options, headers });
+  if (res.status === 401) {
+    handleUnauthorized();
+    throw new Error('Unauthorized');
+  }
   if (!res.ok) {
     throw new Error(`API error: ${res.status} ${res.statusText}`);
   }
@@ -124,6 +151,25 @@ export async function getReadiness() {
   return fetchJSON(`${BASE}/stats/readiness`);
 }
 
+export async function getReadinessHistory(days = 90) {
+  return fetchJSON(`${BASE}/stats/readiness/history?days=${days}`);
+}
+
+export async function getCorrelations(days = 365) {
+  return fetchJSON(`${BASE}/stats/correlations?days=${days}`);
+}
+
+export async function getWeeklyDigest() {
+  return fetchJSON(`${BASE}/stats/digest`);
+}
+
+export async function getEfficiencyTrend(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.type) qs.set('type', params.type);
+  if (params.days) qs.set('days', params.days);
+  return fetchJSON(`${BASE}/stats/efficiency?${qs.toString()}`);
+}
+
 export async function getRoutes(type = 'Run') {
   return fetchJSON(`${BASE}/routes?type=${type}`);
 }
@@ -138,7 +184,7 @@ export async function buildRoutes(type = 'Run') {
 
 export async function renameRoute(id, name) {
   return fetchJSON(`${BASE}/routes/${id}`, {
-    method: 'PATCH',
+    method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name }),
   });
@@ -178,7 +224,12 @@ export async function deleteBlock(id) {
 export async function importAppleHealth(file) {
   const form = new FormData();
   form.append('file', file);
-  const res = await fetch(`${BASE}/import/apple-health`, { method: 'POST', body: form });
+  const res = await fetch(`${BASE}/import/apple-health`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: form,
+  });
+  if (res.status === 401) { handleUnauthorized(); throw new Error('Unauthorized'); }
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Import failed: ${res.status} ${text}`);
@@ -199,4 +250,16 @@ export async function getRecentPRs(params = {}) {
 
 export async function getBestPRs() {
   return fetchJSON(`${BASE}/activities/prs/best`);
+}
+
+export async function getActivityComparison(id) {
+  return fetchJSON(`${BASE}/activities/${id}/comparison`);
+}
+
+export async function getHealthSummary() {
+  return fetchJSON(`${BASE}/health/summary`);
+}
+
+export async function getHealthMetric(metric, days = 90) {
+  return fetchJSON(`${BASE}/health/metrics/${metric}?days=${days}`);
 }

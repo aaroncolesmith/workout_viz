@@ -14,6 +14,7 @@ import {
 import WorkoutPCA from '../components/WorkoutPCA';
 import WorkoutRadar from '../components/WorkoutRadar';
 import { getPcaData } from '../utils/api';
+import { formatDate } from '../utils/format';
 
 const SimilarityExplorer = () => {
   const navigate = useNavigate();
@@ -133,7 +134,7 @@ const SimilarityExplorer = () => {
                 </div>
                 <div className="mini-row">
                   <span className="mini-label">Date</span>
-                  <span className="mini-value">{selectedActivity.date}</span>
+                  <span className="mini-value">{formatDate(selectedActivity.date)}</span>
                 </div>
                 <div className="mini-row">
                   <span className="mini-label">Cluster</span>
@@ -186,7 +187,7 @@ const SimilarityExplorer = () => {
                   <div key={c.activity.id} className="comp-preview-card">
                     <span className="comp-preview-label">ACTIVITY {i+1}</span>
                     <span className="comp-preview-name">{c.activity.name}</span>
-                    <span className="comp-preview-date">{c.activity.date}</span>
+                    <span className="comp-preview-date">{formatDate(c.activity.date)}</span>
                   </div>
                 ))}
               </div>

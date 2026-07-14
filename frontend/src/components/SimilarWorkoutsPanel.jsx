@@ -1,8 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import WorkoutPCA from './WorkoutPCA';
+import SportBadge from './SportBadge';
 import {
-  formatActivityName, formatDate, formatRelativeTo, formatDistance, formatPace, formatHR, activityClass, activityIcon
+  formatActivityName, formatDate, formatRelativeTo, formatDistance, formatPace, formatHR
 } from '../utils/format';
 
 const DATE_PRESETS = [
@@ -84,9 +85,7 @@ export default function SimilarWorkoutsPanel({ activity, similar, pcaData, compa
               onClick={() => navigate(`/activity/${s.activity.id}`)}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
-                <div className={`activity-type-badge ${activityClass(s.activity.type)}`}>
-                  {activityIcon(s.activity.type)}
-                </div>
+                <SportBadge type={s.activity.type} size={36} />
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
                     <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{formatActivityName(s.activity)}</div>

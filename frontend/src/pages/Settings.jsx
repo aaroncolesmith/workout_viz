@@ -77,6 +77,38 @@ function NativeHealthKitSection() {
   );
 }
 
+function AccountSection() {
+  const hasNative = typeof window !== 'undefined' && window.WorkoutVizNative?.available;
+
+  if (!hasNative) {
+    return (
+      <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+        Account management is only available from the iOS companion app.
+      </div>
+    );
+  }
+
+  return (
+    <button
+      onClick={() => window.WorkoutVizNative.openAccount()}
+      style={{
+        background: 'transparent',
+        border: '1px solid var(--border-subtle)',
+        color: 'var(--text-primary)',
+        fontFamily: "'Inter', sans-serif",
+        fontWeight: 600,
+        fontSize: '0.75rem',
+        letterSpacing: '0.04em',
+        padding: '8px 14px',
+        borderRadius: 6,
+        cursor: 'pointer',
+      }}
+    >
+      Export or Delete Data
+    </button>
+  );
+}
+
 export default function Settings() {
   return (
     <div style={{ maxWidth: 900, margin: '0 auto' }}>
@@ -96,6 +128,13 @@ export default function Settings() {
         description="Connect Strava to pull activities and splits, or drop in an Apple Health export.zip for a one-shot import."
       >
         <SyncPanel />
+      </SettingsSection>
+
+      <SettingsSection
+        title="Account"
+        description="Export all your data as a ZIP, or permanently delete it from this device and the server."
+      >
+        <AccountSection />
       </SettingsSection>
     </div>
   );

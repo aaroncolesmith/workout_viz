@@ -92,7 +92,11 @@ export default function Activities() {
                 <SportBadge type={a.type} size={36} />
                 <div className="activity-info">
                   <div className="activity-name">{formatActivityName(a)}</div>
-                  <div className="activity-date">{formatRelativeDate(a.date)} · {formatDate(a.date)}</div>
+                  <div className="activity-date">
+                    {formatRelativeDate(a.date) === formatDate(a.date)
+                      ? formatDate(a.date)
+                      : `${formatRelativeDate(a.date)} · ${formatDate(a.date)}`}
+                  </div>
                 </div>
                 <div className="activity-metric">
                   <div className="metric-value">{formatDistance(a.distance_miles)}</div>

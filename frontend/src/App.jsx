@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import Dashboard from './pages/Dashboard';
+import Body from './pages/Body';
 import Activities from './pages/Activities';
 import ActivityDetail from './pages/ActivityDetail';
 import SimilarityExplorer from './pages/SimilarityExplorer';
@@ -26,6 +27,15 @@ function IconDashboard() {
       <rect x="14" y="3" width="7" height="7" rx="1.5" />
       <rect x="3" y="14" width="7" height="7" rx="1.5" />
       <rect x="14" y="14" width="7" height="7" rx="1.5" />
+    </svg>
+  );
+}
+
+function IconBody() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 20s-7-4.5-9-9c-1.2-2.8.6-6 3.6-6 1.8 0 3.4 1 4.4 2.6 1-1.6 2.6-2.6 4.4-2.6 3 0 4.8 3.2 3.6 6-2 4.5-9 9-9 9z" fill="none" strokeWidth="1.8" />
+      <polyline points="5,12 9,12 10.5,9.5 13,14.5 14.5,12 19,12" fill="none" strokeWidth="1.6" />
     </svg>
   );
 }
@@ -113,6 +123,14 @@ function BottomNav() {
         <span className="bottom-nav-label">Dashboard</span>
       </NavLink>
       <NavLink
+        to="/body"
+        className={({ isActive }) => `bottom-nav-tab ${isActive ? 'active' : ''}`}
+        aria-label="Body"
+      >
+        <IconBody />
+        <span className="bottom-nav-label">Body</span>
+      </NavLink>
+      <NavLink
         to="/activities"
         className={({ isActive }) => `bottom-nav-tab ${isActive ? 'active' : ''}`}
         aria-label="Activities"
@@ -134,6 +152,11 @@ export default function App() {
             <Route path="/" element={
               <ErrorBoundary label="Dashboard">
                 <Dashboard />
+              </ErrorBoundary>
+            } />
+            <Route path="/body" element={
+              <ErrorBoundary label="Body">
+                <Body />
               </ErrorBoundary>
             } />
             <Route path="/activities" element={

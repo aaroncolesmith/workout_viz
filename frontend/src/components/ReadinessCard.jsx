@@ -16,6 +16,10 @@ const ZONE_CONFIG = {
   recovery: { color: '#f87171', bg: 'rgba(248,113,113,0.08)', border: 'rgba(248,113,113,0.25)', label: 'Recovery'    },
 };
 
+const factorColor = (score) =>
+  score >= 85 ? '#4ade80' : score >= 70 ? '#38bdf8' : score >= 50 ? '#fbbf24'
+  : score >= 30 ? '#fb923c' : '#f87171';
+
 export default function ReadinessCard() {
   const { data, isLoading } = useQuery({
     queryKey: ['readiness'],
@@ -56,7 +60,7 @@ export default function ReadinessCard() {
       {/* Divider */}
       <div style={{ width: 1, height: 40, background: zone.border, flexShrink: 0 }} />
 
-      {/* Recommendation */}
+      {/* Recommendation + explainable factors (RDY-2) */}
       <div style={{ flex: 1, minWidth: 180 }}>
         <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2 }}>
           Today's Recommendation
@@ -64,6 +68,25 @@ export default function ReadinessCard() {
         <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
           {data.recommendation}
         </div>
+        {data.factors?.length > 1 && (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 7 }}>
+            {data.factors.map(f => (
+              <span
+                key={f.name}
+                title={f.detail}
+                style={{
+                  fontSize: '0.62rem', fontWeight: 600, cursor: 'default',
+                  padding: '2px 8px', borderRadius: 10,
+                  color: factorColor(f.score),
+                  background: `${factorColor(f.score)}12`,
+                  border: `1px solid ${factorColor(f.score)}30`,
+                }}
+              >
+                {f.name} {f.score}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Divider */}

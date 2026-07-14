@@ -130,7 +130,7 @@ export default function InsightCard({ activityId }) {
         key="split"
         color={splitColor}
         label={splitLabel}
-        value={`${split_quality.delta_str} diff`}
+        value={`${Math.round(split_quality.delta_seconds)}s/mi diff`}
         sub={splitDesc}
       />
     );

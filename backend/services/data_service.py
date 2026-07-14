@@ -31,12 +31,9 @@ from typing import Optional, List, Tuple, Dict, Any, Union
 import numpy as np
 import pandas as pd
 
-from backend.services.database import init_db, get_conn
+from backend.services.database import get_conn, init_db
 
 logger = logging.getLogger(__name__)
-
-DATA_DIR = Path(os.getenv("DATA_DIR", Path(__file__).parent.parent.parent / "data"))
-DB_PATH  = Path(os.getenv("DB_PATH",   Path(__file__).parent.parent / "workouts.db"))
 
 # ── TTL cache ─────────────────────────────────────────────────────────────────
 
@@ -86,34 +83,52 @@ class _TTLCache:
 
 class DataService:
     """
-    Singleton-style data service backed by SQLite.
+    Per-user data service backed by an encrypted SQLCipher DB.
 
-    Public API is identical to the old CSV-based DataService so all callers
-    (API routes, SyncService, PCA service, similarity service) continue to work
-    without changes.
+    Each instance is bound to one user_id and its corresponding workouts.db.
+    The DataServiceRegistry (below) manages lifecycle and LRU eviction.
     """
 
     # Cache TTLs
-    _OVERVIEW_TTL   = 60    # overview recomputed at most once per minute
-    _TRENDS_TTL     = 120   # trend data: 2 min
+    _OVERVIEW_TTL   = 60
+    _TRENDS_TTL     = 120
     _CALENDAR_TTL   = 120
-    _ANALYTICS_TTL  = 300   # PCA / similarity: 5 min (expensive)
+    _ANALYTICS_TTL  = 300
 
-    def __init__(self):
+    def __init__(self, user_id: str, data_dir: Optional[Path] = None):
         t0 = _time.perf_counter()
-        # Ensure DB is initialised
-        init_db(DB_PATH)
+        self.user_id = user_id
+        # Path layout and DATA_DIR default live in identity_db — the same
+        # module that provisions the DB at login — so they can't diverge.
+        from backend.services.identity_db import get_user_dek, get_user_db_path
+        self.db_path = get_user_db_path(user_id, data_dir)
+        self.data_dir = self.db_path.parent
+
+        # Load this user's DEK for opening the encrypted DB
+        self._dek = get_user_dek(user_id)
+
+        # Idempotent: guarantees the schema exists even if login-time
+        # provisioning was interrupted after the identity rows were committed.
+        init_db(self.db_path, key=self._dek)
+
         self._write_lock = threading.Lock()
 
         # Per-topic caches
         self._overview_cache  = _TTLCache(self._OVERVIEW_TTL)
         self._trends_cache    = _TTLCache(self._TRENDS_TTL)
         self._calendar_cache  = _TTLCache(self._CALENDAR_TTL)
-        self._analytics_cache = _TTLCache(self._ANALYTICS_TTL)  # PCA, similarity
+        self._analytics_cache = _TTLCache(self._ANALYTICS_TTL)
+
+        # Trigger per-user backfill if not yet done
+        self._maybe_backfill_pr_distances()
 
         elapsed_ms = (_time.perf_counter() - t0) * 1000
-        n = get_conn().execute("SELECT COUNT(*) FROM activities").fetchone()[0]
-        logger.info(f"DataService ready — {n} activities in SQLite ({elapsed_ms:.0f}ms)")
+        n = self._conn().execute("SELECT COUNT(*) FROM activities").fetchone()[0]
+        logger.info(f"DataService[{user_id}] ready — {n} activities ({elapsed_ms:.0f}ms)")
+
+    def _conn(self):
+        """Return the thread-local SQLCipher connection for this user's DB."""
+        return get_conn(self.db_path, self._dek)
 
     # ── Write helpers ──────────────────────────────────────────────────────────
 
@@ -124,7 +139,7 @@ class DataService:
         self._analytics_cache.flush()
 
     def get_latest_activity_timestamp(self) -> Optional[datetime]:
-        row = get_conn().execute(
+        row = self._conn().execute(
             "SELECT MAX(start_date) FROM activities"
         ).fetchone()
         if not row or not row[0]:
@@ -141,7 +156,7 @@ class DataService:
             return 0
 
         inserted = 0
-        conn = get_conn()
+        conn = self._conn()
         with self._write_lock:
             for act in new_activities:
                 act_id = act.get("id")
@@ -159,17 +174,13 @@ class DataService:
                     logger.warning(f"Failed to upsert activity {act_id}: {e}")
             conn.commit()
 
-        # Also keep CSV in sync for legacy tooling / SyncService
-        if inserted:
-            self._also_write_csv()
-
         self._invalidate_all_caches()
         return inserted
 
     def add_summaries(self, summaries: List[dict]):
         if not summaries:
             return
-        conn = get_conn()
+        conn = self._conn()
         with self._write_lock:
             for s in summaries:
                 conn.execute("""
@@ -220,52 +231,30 @@ class DataService:
             (50.0,  "50 Miles"),
         ]
         
-        splits_sorted = sorted(splits, key=lambda s: float(s["split_number"] or 0))
-        n = len(splits_sorted)
-        total_dist = float(splits_sorted[-1]["total_distance_miles"] or 0) if splits_sorted else 0
-        activity_name = splits_sorted[0].get("activity_name", "Activity")
+        # Grain-agnostic: handles legacy 0.1-mi rows and new finer rows alike.
+        from backend.services.splits_service import rolling_fastest_segments
 
+        activity_name = splits[0].get("activity_name", "Activity")
         summaries = []
-        for target_miles, label in TARGETS:
-            if total_dist < target_miles * 0.95:
-                continue
-            buckets_needed = round(target_miles / 0.1)
-            best_time = None
-            best_start_mile = None
-            best_end_mile = None
-            best_hr = None
-            for i in range(n - buckets_needed + 1):
-                window = splits_sorted[i : i + buckets_needed]
-                window_time = sum(float(s["time_seconds"] or 0) for s in window)
-                if best_time is None or window_time < best_time:
-                    best_time = window_time
-                    last = window[-1]
-                    end_mi = float(last["total_distance_miles"] or 0)
-                    best_start_mile = max(0.0, round(end_mi - target_miles, 2))
-                    best_end_mile   = round(end_mi, 2)
-                    hrs = [float(s["avg_heartrate"]) for s in window if s.get("avg_heartrate")]
-                    best_hr = round(sum(hrs) / len(hrs), 1) if hrs else None
-            
-            if best_time is not None:
-                t = int(best_time)
-                h, m, s = t // 3600, (t % 3600) // 60, t % 60
-                time_str = f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
-                
-                summaries.append({
-                    "activity_id": activity_id,
-                    "activity_name": activity_name,
-                    "distance_miles": target_miles,
-                    "fastest_time_seconds": round(best_time, 1),
-                    "fastest_time_minutes": time_str,
-                    "start_mile": best_start_mile,
-                    "end_mile": best_end_mile,
-                    "avg_heartrate_fastest": best_hr,
-                    "elevation_gain_fastest_meters": sum(float(s["elevation_gain_meters"] or 0) for s in splits_sorted[int(best_start_mile/0.1):int(best_end_mile/0.1)]) # approximation
-                })
+        for seg in rolling_fastest_segments(splits, TARGETS):
+            t = int(seg["time_seconds"])
+            h, m, s = t // 3600, (t % 3600) // 60, t % 60
+            time_str = f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+            summaries.append({
+                "activity_id": activity_id,
+                "activity_name": activity_name,
+                "distance_miles": seg["distance_miles"],
+                "fastest_time_seconds": seg["time_seconds"],
+                "fastest_time_minutes": time_str,
+                "start_mile": seg["start_mile"],
+                "end_mile": seg["end_mile"],
+                "avg_heartrate_fastest": seg["avg_heartrate"],
+                "elevation_gain_fastest_meters": seg["elevation_gain_meters"],
+            })
 
         if summaries:
             # First clear existing summaries for this activity
-            conn = get_conn()
+            conn = self._conn()
             with self._write_lock:
                 conn.execute("DELETE FROM summaries WHERE activity_id = ?", (activity_id,))
             self.add_summaries(summaries)
@@ -278,7 +267,7 @@ class DataService:
         Inserts a row into pr_events for every distance that beats the
         previous record.  Returns the list of new PR dicts.
         """
-        conn = get_conn()
+        conn = self._conn()
         # Get the activity's type and date
         act_row = conn.execute(
             "SELECT type, date, name FROM activities WHERE id = ?", (activity_id,)
@@ -385,7 +374,7 @@ class DataService:
 
     def get_recent_prs(self, limit: int = 20, since: Optional[str] = None) -> List[dict]:
         """Return recent PR events, most recent first."""
-        conn = get_conn()
+        conn = self._conn()
         where = "WHERE 1=1"
         params: list = []
         if since:
@@ -404,7 +393,7 @@ class DataService:
     def update_activities(self, updated_list: List[dict]):
         if not updated_list:
             return
-        conn = get_conn()
+        conn = self._conn()
         with self._write_lock:
             for act in updated_list:
                 act_id = act.get("id")
@@ -422,14 +411,13 @@ class DataService:
                 except Exception as e:
                     logger.warning(f"Failed to update activity {act_id}: {e}")
             conn.commit()
-        self._also_write_csv()
         self._invalidate_all_caches()
 
     def add_splits(self, new_splits: List[dict]):
         if not new_splits:
             return
         act_id = new_splits[0].get("activity_id")
-        conn = get_conn()
+        conn = self._conn()
         with self._write_lock:
             # Delete existing splits for this activity — same behaviour as CSV version
             if act_id:
@@ -488,7 +476,7 @@ class DataService:
             min_distance=min_distance,
             max_distance=max_distance,
         )
-        conn = get_conn()
+        conn = self._conn()
         total = conn.execute(
             f"SELECT COUNT(*) FROM activities{where}", params
         ).fetchone()[0]
@@ -500,20 +488,20 @@ class DataService:
         return [self._row_to_summary(r) for r in rows], total
 
     def get_activity(self, activity_id: int) -> Optional[dict]:
-        row = get_conn().execute(
+        row = self._conn().execute(
             "SELECT * FROM activities WHERE id = ?", (activity_id,)
         ).fetchone()
         return self._row_to_detail(row) if row else None
 
     def get_splits(self, activity_id: int) -> List[dict]:
-        rows = get_conn().execute(
+        rows = self._conn().execute(
             "SELECT * FROM splits WHERE activity_id = ? ORDER BY split_number ASC",
             (activity_id,),
         ).fetchall()
         return [self._row_to_split(r) for r in rows]
 
     def get_summary(self, activity_id: int) -> List[dict]:
-        rows = get_conn().execute(
+        rows = self._conn().execute(
             "SELECT * FROM summaries WHERE activity_id = ?", (activity_id,)
         ).fetchall()
         return [self._row_to_summary_record(r) for r in rows]
@@ -557,7 +545,7 @@ class DataService:
             ORDER BY a.date ASC
         """
         
-        rows = get_conn().execute(query, params).fetchall()
+        rows = self._conn().execute(query, params).fetchall()
         
         result = []
         for r in rows:
@@ -581,7 +569,7 @@ class DataService:
         if cached is not None:
             return cached
 
-        conn = get_conn()
+        conn = self._conn()
         total = conn.execute("SELECT COUNT(*) FROM activities").fetchone()[0]
         if total == 0:
             result = {
@@ -632,7 +620,7 @@ class DataService:
         return result
 
     def get_activity_types(self) -> List[str]:
-        rows = get_conn().execute(
+        rows = self._conn().execute(
             "SELECT DISTINCT type FROM activities WHERE type IS NOT NULL ORDER BY type"
         ).fetchall()
         return [r[0] for r in rows]
@@ -654,7 +642,7 @@ class DataService:
             date_to=date_to,
             exclude_null_date=True,
         )
-        rows = get_conn().execute(
+        rows = self._conn().execute(
             f"SELECT * FROM activities{where} ORDER BY date ASC, start_date ASC",
             params,
         ).fetchall()
@@ -688,7 +676,7 @@ class DataService:
 
         from datetime import timedelta
         cutoff = (datetime.now() - timedelta(days=months * 30)).strftime("%Y-%m-%d")
-        rows = get_conn().execute("""
+        rows = self._conn().execute("""
             SELECT
                 date,
                 COUNT(*)            AS cnt,
@@ -704,7 +692,7 @@ class DataService:
         # Aggregate primary type per day (SQLite doesn't have mode() natively)
         from collections import Counter
         # Re-query to get type distribution per date
-        type_rows = get_conn().execute("""
+        type_rows = self._conn().execute("""
             SELECT date, type FROM activities
             WHERE date IS NOT NULL AND date >= ?
         """, (cutoff,)).fetchall()
@@ -743,7 +731,7 @@ class DataService:
         Used by pca_service and similarity_service — NOT for API responses.
         """
         where, params = self._build_where(activity_type=activity_type)
-        rows = get_conn().execute(
+        rows = self._conn().execute(
             f"SELECT * FROM activities{where} ORDER BY date DESC LIMIT ?",
             params + [limit],
         ).fetchall()
@@ -793,7 +781,7 @@ class DataService:
                 .round(4)
             )
 
-        conn = get_conn()
+        conn = self._conn()
         with self._write_lock:
             for _, row in df.iterrows():
                 conn.execute("""
@@ -1099,37 +1087,111 @@ class DataService:
             return 1 if v.lower() in ("true", "1", "yes", "t") else 0
         return int(bool(v))
 
-    # ── CSV sync (legacy compat) ───────────────────────────────────────────────
+    # ── Per-user extended-PR backfill ─────────────────────────────────────────
 
-    def _also_write_csv(self):
-        """
-        Export the activities table back to CSV so SyncService's existing
-        bookkeeping (latest timestamp from CSV) continues to work.
-        Called after every write. Non-fatal if it fails.
-        """
+    _EXTENDED_PR_FLAG = "extended_pr_distances_backfilled"
+
+    def _maybe_backfill_pr_distances(self):
+        """Schedule the extended-PR backfill once per user if not yet done."""
         try:
-            rows = get_conn().execute("SELECT * FROM activities ORDER BY date ASC").fetchall()
-            if not rows:
+            row = self._conn().execute(
+                "SELECT value FROM user_settings WHERE key = ?", (self._EXTENDED_PR_FLAG,)
+            ).fetchone()
+            if row and row["value"] == "done":
                 return
-            df = pd.DataFrame([dict(r) for r in rows])
-            out = DATA_DIR / "strava_activities.csv"
-            tmp = out.with_suffix(".tmp")
-            df.to_csv(tmp, index=False)
-            tmp.replace(out)
-        except Exception as e:
-            logger.warning(f"CSV sync failed (non-fatal): {e}")
+        except Exception:
+            return  # DB not ready yet; will retry on next init
+
+        threading.Thread(
+            target=self._run_pr_backfill,
+            name=f"pr-backfill-{self.user_id[:8]}",
+            daemon=True,
+        ).start()
+        logger.info(f"Extended PR backfill scheduled for user {self.user_id[:8]}")
+
+    def _run_pr_backfill(self):
+        try:
+            conn = self._conn()
+            ids = [r["activity_id"] for r in conn.execute(
+                "SELECT DISTINCT activity_id FROM splits"
+            ).fetchall()]
+            if not ids:
+                conn.execute(
+                    "INSERT OR REPLACE INTO user_settings (key, value) VALUES (?, 'done')",
+                    (self._EXTENDED_PR_FLAG,)
+                )
+                conn.commit()
+                return
+            done = failed = 0
+            for aid in ids:
+                try:
+                    self.compute_and_save_summaries(aid)
+                    done += 1
+                except Exception as e:
+                    failed += 1
+                    logger.warning(f"PR backfill {aid}: {e}")
+            conn.execute(
+                "INSERT OR REPLACE INTO user_settings (key, value) VALUES (?, 'done')",
+                (self._EXTENDED_PR_FLAG,)
+            )
+            conn.commit()
+            logger.info(f"PR backfill[{self.user_id[:8]}] done: {done} ok, {failed} failed")
+        except Exception:
+            logger.exception(f"PR backfill crashed for user {self.user_id[:8]}")
 
 
-# ── Module-level singleton ─────────────────────────────────────────────────────
+# ── DataServiceRegistry (DATA-4) ──────────────────────────────────────────────
 
-_data_service: Optional[DataService] = None
-_singleton_lock = threading.Lock()
+class _DataServiceRegistry:
+    """
+    LRU registry: user_id → DataService.
+
+    Caps live instances at _MAX_ENTRIES.  On eviction, closes that user's
+    thread-local connections so file handles don't accumulate.
+    """
+    _MAX_ENTRIES = 200
+
+    def __init__(self):
+        self._cache: dict[str, tuple[DataService, float]] = {}
+        self._lock = threading.Lock()
+
+    def get(self, user_id: str) -> DataService:
+        with self._lock:
+            entry = self._cache.get(user_id)
+            if entry:
+                svc, _ = entry
+                self._cache[user_id] = (svc, _time.monotonic())
+                return svc
+
+            # Evict LRU if at cap
+            if len(self._cache) >= self._MAX_ENTRIES:
+                oldest_uid = min(self._cache, key=lambda k: self._cache[k][1])
+                evicted_svc, _ = self._cache.pop(oldest_uid)
+                try:
+                    from backend.services.database import close_conn
+                    close_conn(evicted_svc.db_path)
+                except Exception:
+                    pass
+                logger.debug(f"Evicted DataService for user {oldest_uid[:8]}")
+
+            svc = DataService(user_id)
+            self._cache[user_id] = (svc, _time.monotonic())
+            return svc
+
+    def evict(self, user_id: str):
+        with self._lock:
+            entry = self._cache.pop(user_id, None)
+            if entry:
+                try:
+                    from backend.services.database import close_conn
+                    close_conn(entry[0].db_path)
+                except Exception:
+                    pass
 
 
-def get_data_service() -> DataService:
-    global _data_service
-    if _data_service is None:
-        with _singleton_lock:
-            if _data_service is None:
-                _data_service = DataService()
-    return _data_service
+_registry = _DataServiceRegistry()
+
+
+def get_data_service(user_id: str) -> DataService:
+    """Return the DataService for the given user_id, creating it if needed."""
+    return _registry.get(user_id)

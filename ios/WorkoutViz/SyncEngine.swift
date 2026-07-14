@@ -5,33 +5,33 @@ import CoreLocation
 
 /// Coordinates HealthKit reads → backend POST.  Singleton, observable.
 ///
-/// Resumable backfill: each workout we successfully upload gets its UUID
-/// recorded in UserDefaults. Tapping "Backfill" again after an interruption
-/// skips already-uploaded workouts and continues from the next one, so
-/// progress accumulates across runs.
+/// Incremental sync (HK-2): uses HKAnchoredObjectQuery so only workouts added
+/// or deleted since the last run are processed.  The anchor is stored in the
+/// Keychain (per-user — cleared on sign-out) under the key "hk_anchor".
+///
+/// Background delivery: HKObserverQuery fires when HealthKit has new data.
+/// Requires UIBackgroundModes: ["healthkit"] — enable via Xcode's
+/// "Signing & Capabilities → HealthKit → Background Delivery" toggle.
 @MainActor
 final class SyncEngine: ObservableObject {
     static let shared = SyncEngine()
 
     @Published var isSyncing = false
     @Published var syncProgress: String = ""
+    @Published var showingAccount = false
     @Published var lastSyncDate: Date? = {
         UserDefaults.standard.object(forKey: "lastSyncDate") as? Date
     }()
 
     private let hk = HealthKitManager.shared
+    private let anchorKey = "hk_anchor"
 
-    // Persistent set of source_ids (HKWorkout UUIDs) we've successfully uploaded.
+    // Persisted set of source_ids we've already uploaded (used for force-retry logic).
     private let syncedKey = "syncedSourceIds"
     private var syncedSourceIds: Set<String> = {
-        let arr = UserDefaults.standard.stringArray(forKey: "syncedSourceIds") ?? []
-        return Set(arr)
+        Set(UserDefaults.standard.stringArray(forKey: "syncedSourceIds") ?? [])
     }()
 
-    /// Backfill chunk size — how many workouts to process before committing
-    /// progress to UserDefaults. Smaller = more frequent commits, more resilience
-    /// to interruptions. GPS workouts are expensive (route + HR fetch per),
-    /// so 25 is a good tradeoff between progress and UI responsiveness.
     private let chunkSize = 25
 
     // MARK: - Public
@@ -39,6 +39,18 @@ final class SyncEngine: ObservableObject {
     func requestPermissionsIfNeeded() async {
         guard hk.isAvailable else { return }
         try? await hk.requestAuthorization()
+        hk.registerWorkoutObserver { [weak self] in
+            guard let self else { return }
+            Task { await self.performSync() }
+        }
+        // Sleep arriving = the user woke up: sync the night's metrics, then
+        // the morning readiness report (RDY-3, opt-in) has fresh data.
+        hk.registerSleepObserver {
+            Task {
+                await MetricsSyncEngine.shared.sync()
+                await NotificationManager.shared.morningReadinessReportIfNeeded()
+            }
+        }
         await syncIfNeeded()
     }
 
@@ -47,32 +59,197 @@ final class SyncEngine: ObservableObject {
         await performSync()
     }
 
-    /// Full historical backfill — ignores lastSyncDate and goes back 10 years.
-    /// Resumable: already-uploaded workouts are skipped based on persisted UUIDs,
-    /// EXCEPT those the backend reports as missing splits — those are always
-    /// re-attempted, so changes in the upload pipeline (e.g. adding treadmill
-    /// distance-sample support) can fill in gaps without a manual reset.
+    /// Full historical backfill — resets anchor, goes back 2 years, re-uploads
+    /// everything the backend says is missing splits.
     func performFullBackfill() async {
         try? await hk.requestAuthorization()
-        print("[SyncEngine] route auth status = \(hk.routeAuthStatus.rawValue) " +
-              "(0=notDetermined, 1=denied, 2=authorized — read auth may always show 0)")
+        print("[SyncEngine] route auth = \(hk.routeAuthStatus.rawValue)")
+
+        // Clear anchor so the anchored query returns all historical workouts.
+        KeychainHelper.delete(key: anchorKey)
 
         let forceRetryKeys = await fetchMissingStreamKeys()
         print("[SyncEngine] backend reports \(forceRetryKeys.count) workouts missing splits")
 
-        await performSync(force: true, since: tenYearsAgo(), forceRetryKeys: forceRetryKeys)
+        let since = Calendar.current.date(byAdding: .year, value: -2, to: Date())!
+        await performSync(force: true, since: since, forceRetryKeys: forceRetryKeys)
     }
 
-    /// Ask the backend which apple_health activities have no splits yet. Returns
-    /// a set of "<type>|<YYYY-MM-DD HH:mm>" keys we can compare against each
-    /// HKWorkout's (type, start_date) to decide whether to force a retry.
+    /// Reset backfill progress so next backfill re-uploads everything.
+    func resetBackfillProgress() {
+        syncedSourceIds.removeAll()
+        UserDefaults.standard.removeObject(forKey: syncedKey)
+        KeychainHelper.delete(key: anchorKey)
+        MetricsSyncEngine.shared.resetProgress()
+    }
+
+    // MARK: - Core sync
+
+    func performSync(
+        force: Bool = false,
+        since overrideSince: Date? = nil,
+        forceRetryKeys: Set<String> = []
+    ) async {
+        guard !isSyncing, hk.isAvailable else { return }
+        isSyncing = true
+        syncProgress = "Starting…"
+        defer { isSyncing = false; syncProgress = "" }
+
+        // Daily health metrics ride along on every workout sync — they change
+        // every day even when no workout does (BIO-3).
+        await MetricsSyncEngine.shared.sync(force: force, since: overrideSince)
+
+        // Load saved anchor; nil on first run.
+        let savedAnchor = loadAnchor()
+
+        // Predicate: only needed when there's no anchor yet (limits initial scope).
+        let predicate: NSPredicate?
+        if savedAnchor == nil {
+            let since = overrideSince ?? Calendar.current.date(
+                byAdding: .day, value: -Config.initialSyncDays, to: Date()
+            )!
+            predicate = HKQuery.predicateForSamples(
+                withStart: since, end: nil, options: .strictStartDate)
+        } else {
+            predicate = nil  // anchor covers everything since last sync
+        }
+
+        let result: HealthKitManager.AnchoredResult
+        do {
+            result = try await hk.fetchWorkoutsAnchored(anchor: savedAnchor, predicate: predicate)
+        } catch {
+            print("[SyncEngine] fetchWorkoutsAnchored failed: \(error)")
+            return
+        }
+
+        // Any failed upload or deletion means the anchor must NOT advance:
+        // an anchored query never re-returns objects once the anchor moves
+        // past them, so advancing on failure silently drops workouts forever.
+        var hadFailures = false
+
+        // ── Handle deletions ──────────────────────────────────────────────────
+        if !result.deletedUUIDs.isEmpty {
+            syncProgress = "Removing \(result.deletedUUIDs.count) deleted workout(s)…"
+            await withTaskGroup(of: Bool.self) { group in
+                for uuid in result.deletedUUIDs {
+                    group.addTask { await self.deleteActivityBySource(uuid) }
+                }
+                for await ok in group where !ok { hadFailures = true }
+            }
+        }
+
+        // ── Handle new/updated workouts ───────────────────────────────────────
+        let workouts = result.workouts
+        let pending: [HKWorkout]
+        if forceRetryKeys.isEmpty && !force {
+            pending = workouts.filter { !syncedSourceIds.contains($0.uuid.uuidString) }
+        } else {
+            pending = workouts.filter { w in
+                if syncedSourceIds.contains(w.uuid.uuidString) {
+                    let key = "\(w.workoutActivityType.backendType)|\(Self.minuteKey(w.startDate))"
+                    if forceRetryKeys.contains(key) {
+                        syncedSourceIds.remove(w.uuid.uuidString)
+                        return true
+                    }
+                    return false
+                }
+                return true
+            }
+        }
+
+        let total = pending.count
+        let alreadyDone = workouts.count - total
+
+        if total == 0 && result.deletedUUIDs.isEmpty {
+            syncProgress = "Up to date"
+            recordSync()
+            saveAnchor(result.anchor)
+            return
+        }
+
+        var done = 0
+        var addedActivities: [HKAddedActivity] = []
+        for chunkStart in stride(from: 0, to: pending.count, by: chunkSize) {
+            let end = min(chunkStart + chunkSize, pending.count)
+            let chunk = Array(pending[chunkStart..<end])
+            let (failures, added) = await processChunk(chunk) { completed in
+                done += completed
+                let skippedLabel = alreadyDone > 0 ? " (\(alreadyDone) already done)" : ""
+                self.syncProgress = "Syncing \(done)/\(total)\(skippedLabel)"
+            }
+            addedActivities += added
+            if failures > 0 { hadFailures = true }
+            commitSyncedIds()
+        }
+
+        if hadFailures {
+            // Keep the old anchor: the next sync re-queries from it and retries
+            // the failed items (successes are skipped via syncedSourceIds).
+            print("[SyncEngine] upload/deletion failures — keeping old anchor for retry")
+        } else {
+            saveAnchor(result.anchor)
+        }
+        recordSync()
+
+        // CMP-5: notify for a just-finished workout. Incremental syncs only —
+        // a backfill of two years of history is not "your run is ready".
+        if !force, !addedActivities.isEmpty {
+            let idBySource = Dictionary(
+                addedActivities.map { ($0.source_id, $0.id) },
+                uniquingKeysWith: { first, _ in first }
+            )
+            let cutoff = Date().addingTimeInterval(-6 * 3600)
+            if let recent = pending
+                .filter({ $0.startDate > cutoff && idBySource[$0.uuid.uuidString] != nil })
+                .max(by: { $0.startDate < $1.startDate }) {
+                await NotificationManager.shared.notifyWorkoutAnalyzed(
+                    activityId: idBySource[recent.uuid.uuidString]!,
+                    workoutType: recent.workoutActivityType.backendType
+                )
+            }
+        }
+    }
+
+    // MARK: - Anchor persistence
+
+    private func loadAnchor() -> HKQueryAnchor? {
+        guard let data = KeychainHelper.loadData(key: anchorKey) else { return nil }
+        return try? NSKeyedUnarchiver.unarchivedObject(ofClass: HKQueryAnchor.self, from: data)
+    }
+
+    private func saveAnchor(_ anchor: HKQueryAnchor) {
+        guard let data = try? NSKeyedArchiver.archivedData(
+            withRootObject: anchor, requiringSecureCoding: true
+        ) else { return }
+        KeychainHelper.saveData(data, key: anchorKey)
+    }
+
+    // MARK: - Deletion
+
+    /// Returns true only when the backend confirmed the deletion.
+    private func deleteActivityBySource(_ uuid: UUID) async -> Bool {
+        guard let url = URL(string: "\(Config.backendURL)/api/activities/source/\(uuid.uuidString)") else { return false }
+        let req = AuthService.shared.authorizedRequest(url: url, method: "DELETE", timeout: 15)
+        do {
+            let (_, response) = try await URLSession.shared.data(for: req)
+            if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
+                print("[SyncEngine] delete \(uuid) failed: HTTP \(http.statusCode)")
+                return false
+            }
+            return true
+        } catch {
+            print("[SyncEngine] delete \(uuid) failed: \(error)")
+            return false
+        }
+    }
+
+    // MARK: - Missing-streams check (for force-retry on backfill)
+
     private func fetchMissingStreamKeys() async -> Set<String> {
         guard let url = URL(string: "\(Config.backendURL)/api/import/healthkit/missing-streams") else {
             return []
         }
-        var req = URLRequest(url: url)
-        req.setValue(Config.healthkitAPIKey, forHTTPHeaderField: "X-Api-Key")
-        req.timeoutInterval = 30
+        let req = AuthService.shared.authorizedRequest(url: url, timeout: 30)
 
         do {
             let (data, _) = try await URLSession.shared.data(for: req)
@@ -81,16 +258,11 @@ final class SyncEngine: ObservableObject {
                 let activities: [Item]
             }
             let decoded = try JSONDecoder().decode(Resp.self, from: data)
-
-            // Backend start_date is ISO8601 like "2026-04-21T18:56:54+00:00".
-            // Normalize to minute precision so iOS (which emits a slightly
-            // different ISO string) can match.
             let iso = ISO8601DateFormatter()
             var keys: Set<String> = []
             for item in decoded.activities {
                 guard let d = iso.date(from: item.start_date) else { continue }
-                let minute = Self.minuteKey(d)
-                keys.insert("\(item.type)|\(minute)")
+                keys.insert("\(item.type)|\(Self.minuteKey(d))")
             }
             return keys
         } catch {
@@ -106,124 +278,28 @@ final class SyncEngine: ObservableObject {
         return f.string(from: d)
     }
 
-    /// Reset backfill progress so next backfill re-uploads everything.
-    func resetBackfillProgress() {
-        syncedSourceIds.removeAll()
-        UserDefaults.standard.removeObject(forKey: syncedKey)
-    }
+    // MARK: - Chunk processing
 
-    private func tenYearsAgo() -> Date {
-        Calendar.current.date(byAdding: .year, value: -10, to: Date())!
-    }
-
-    func performSync(
-        force: Bool = false,
-        since overrideSince: Date? = nil,
-        forceRetryKeys: Set<String> = []
-    ) async {
-        guard !isSyncing, hk.isAvailable else { return }
-        isSyncing = true
-        syncProgress = "Starting…"
-        defer {
-            isSyncing = false
-            syncProgress = ""
-        }
-
-        let since: Date
-        if let o = overrideSince {
-            since = o
-        } else if let last = lastSyncDate, !force {
-            since = last
-        } else {
-            since = Calendar.current.date(
-                byAdding: .day, value: -Config.initialSyncDays, to: Date()
-            )!
-        }
-
-        let workouts: [HKWorkout]
-        do {
-            workouts = try await hk.fetchWorkouts(since: since)
-        } catch {
-            print("[SyncEngine] fetchWorkouts failed: \(error)")
-            return
-        }
-        guard !workouts.isEmpty else {
-            recordSync()
-            return
-        }
-
-        // Skip workouts we've already uploaded UNLESS the backend says they're
-        // still missing splits — those always get retried so pipeline changes
-        // (e.g. indoor distance samples) can fill gaps without a manual reset.
-        let pending = workouts.filter { w in
-            if syncedSourceIds.contains(w.uuid.uuidString) {
-                let key = "\(w.workoutActivityType.backendType)|\(Self.minuteKey(w.startDate))"
-                if forceRetryKeys.contains(key) {
-                    // Remove from synced set so a successful retry can re-mark it.
-                    syncedSourceIds.remove(w.uuid.uuidString)
-                    return true
-                }
-                return false
-            }
-            return true
-        }
-        let total = pending.count
-        let alreadyDone = workouts.count - total
-
-        if total == 0 {
-            syncProgress = "Nothing new"
-            recordSync()
-            return
-        }
-
-        // Process in chunks. Progress commits after every chunk, so
-        // an interruption still leaves the completed chunks persisted.
-        var done = 0
-        for chunkStart in stride(from: 0, to: pending.count, by: chunkSize) {
-            let end = min(chunkStart + chunkSize, pending.count)
-            let chunk = Array(pending[chunkStart..<end])
-
-            await processChunk(chunk) { completed in
-                done += completed
-                let remaining = total - done
-                let skippedLabel = alreadyDone > 0 ? " (\(alreadyDone) already done)" : ""
-                self.syncProgress = "Syncing \(done)/\(total)\(skippedLabel) — \(remaining) left"
-            }
-
-            // Persist after each chunk so a crash / background / network loss
-            // doesn't throw away the work we just did.
-            commitSyncedIds()
-        }
-
-        recordSync()
-    }
-
-    // MARK: - Private
-
-    /// Process up to `chunkSize` workouts. Records each successfully-uploaded
-    /// workout's UUID in the in-memory set; caller persists to UserDefaults.
-    /// Per-workout errors are caught so one bad workout doesn't abort the chunk.
+    /// Returns the number of workouts whose upload failed (caller must not
+    /// advance the HealthKit anchor when this is non-zero) plus the backend
+    /// ids of newly inserted activities (for the CMP-5 notification).
     private func processChunk(
         _ workouts: [HKWorkout],
         onProgress: (Int) -> Void
-    ) async {
-        var nonGPSBatch: [(HKWorkoutRequest, String)] = []  // (request, source_id)
+    ) async -> (failures: Int, added: [HKAddedActivity]) {
+        var failures = 0
+        var added: [HKAddedActivity] = []
+        var nonGPSBatch: [(HKWorkoutRequest, String)] = []
 
         for workout in workouts {
             let sourceId = workout.uuid.uuidString
-
             do {
                 let (avgHR, maxHR) = try await hk.fetchHeartRate(for: workout)
                 var req = HKWorkoutRequest.from(workout: workout, avgHR: avgHR, maxHR: maxHR)
 
                 if workout.workoutActivityType.isGPS {
                     let locations = (try? await hk.fetchRoute(for: workout)) ?? []
-                    let hrSeries = (try? await hk.fetchHeartRateSeries(for: workout)) ?? []
-
-                    // Outdoor path: GPS route gives us cumulative distance via
-                    //   Haversine on the backend.
-                    // Indoor path (treadmill, stationary bike): no route, but the
-                    //   Watch still records distance samples we can bucket.
+                    let hrSeries  = (try? await hk.fetchHeartRateSeries(for: workout)) ?? []
                     let distanceSeries = locations.isEmpty
                         ? ((try? await hk.fetchDistanceSeries(for: workout)) ?? [])
                         : []
@@ -237,37 +313,31 @@ final class SyncEngine: ObservableObject {
                             hrSeries: hrSeries
                         )
                     } else {
-                        print("[SyncEngine] no route and no distance samples for GPS workout " +
-                              "\(sourceId) type=\(workout.workoutActivityType.backendType) " +
-                              "start=\(workout.startDate) — will retry next backfill")
+                        print("[SyncEngine] no streams for GPS workout \(sourceId) — will retry")
                     }
-                    try await postBatch([req])
-
-                    if gotStreams {
-                        syncedSourceIds.insert(sourceId)
-                    }
+                    added += try await postBatch([req])
+                    if gotStreams { syncedSourceIds.insert(sourceId) }
                     onProgress(1)
                 } else {
                     nonGPSBatch.append((req, sourceId))
                 }
             } catch {
-                // Record but continue with the next workout.
-                print("[SyncEngine] upload failed for workout \(sourceId): \(error)")
+                failures += 1
+                print("[SyncEngine] upload failed for \(sourceId): \(error)")
             }
         }
 
-        // Flush accumulated non-GPS workouts for this chunk.
         if !nonGPSBatch.isEmpty {
             do {
-                try await postBatch(nonGPSBatch.map { $0.0 })
-                for (_, sid) in nonGPSBatch {
-                    syncedSourceIds.insert(sid)
-                }
+                added += try await postBatch(nonGPSBatch.map { $0.0 })
+                for (_, sid) in nonGPSBatch { syncedSourceIds.insert(sid) }
                 onProgress(nonGPSBatch.count)
             } catch {
+                failures += nonGPSBatch.count
                 print("[SyncEngine] non-GPS batch POST failed: \(error)")
             }
         }
+        return (failures, added)
     }
 
     private func commitSyncedIds() {
@@ -280,20 +350,19 @@ final class SyncEngine: ObservableObject {
         UserDefaults.standard.set(now, forKey: "lastSyncDate")
     }
 
-    private func postBatch(_ payloads: [HKWorkoutRequest]) async throws {
-        guard let url = URL(string: "\(Config.backendURL)/api/import/healthkit") else { return }
-
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
+    @discardableResult
+    private func postBatch(_ payloads: [HKWorkoutRequest]) async throws -> [HKAddedActivity] {
+        guard let url = URL(string: "\(Config.backendURL)/api/import/healthkit") else { return [] }
+        var req = AuthService.shared.authorizedRequest(url: url, method: "POST", timeout: 120)
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue(Config.healthkitAPIKey, forHTTPHeaderField: "X-Api-Key")
         req.httpBody = try JSONEncoder().encode(HKSyncBody(workouts: payloads))
-        req.timeoutInterval = 120
 
-        let (_, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await URLSession.shared.data(for: req)
         if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
             throw URLError(.badServerResponse)
         }
+        let decoded = try? JSONDecoder().decode(HKSyncResponseBody.self, from: data)
+        return decoded?.added_activities ?? []
     }
 
     private static func buildStreams(
@@ -302,78 +371,74 @@ final class SyncEngine: ObservableObject {
         distanceSeries: [(Date, Double)],
         hrSeries: [(Date, Double)]
     ) -> HKStreams {
-        let locs = locations.map { loc -> HKLocationSample in
-            HKLocationSample(
-                t: loc.timestamp.timeIntervalSince(workoutStart),
-                lat: loc.coordinate.latitude,
-                lng: loc.coordinate.longitude,
-                alt: loc.altitude
-            )
-        }
-        let dists = distanceSeries.map { (date, meters) -> HKDistanceSample in
-            HKDistanceSample(t: date.timeIntervalSince(workoutStart), m: meters)
-        }
-        let hrs = hrSeries.map { (date, bpm) -> HKHeartRateSample in
-            HKHeartRateSample(t: date.timeIntervalSince(workoutStart), bpm: bpm)
-        }
-        return HKStreams(locations: locs, distance: dists, heartrate: hrs)
+        HKStreams(
+            locations: locations.map {
+                HKLocationSample(t: $0.timestamp.timeIntervalSince(workoutStart),
+                                 lat: $0.coordinate.latitude,
+                                 lng: $0.coordinate.longitude,
+                                 alt: $0.altitude)
+            },
+            distance: distanceSeries.map {
+                HKDistanceSample(t: $0.0.timeIntervalSince(workoutStart), m: $0.1)
+            },
+            heartrate: hrSeries.map {
+                HKHeartRateSample(t: $0.0.timeIntervalSince(workoutStart), bpm: $0.1)
+            }
+        )
     }
 }
 
 // MARK: - Data models (match backend Pydantic schema)
 
 private struct HKLocationSample: Codable {
-    let t: Double
-    let lat: Double
-    let lng: Double
-    let alt: Double?
+    let t: Double; let lat: Double; let lng: Double; let alt: Double?
 }
-
 private struct HKHeartRateSample: Codable {
-    let t: Double
-    let bpm: Double
+    let t: Double; let bpm: Double
 }
-
 private struct HKDistanceSample: Codable {
-    let t: Double
-    let m: Double    // cumulative meters since workout start
+    let t: Double; let m: Double
 }
-
 private struct HKStreams: Codable {
     let locations: [HKLocationSample]
-    let distance: [HKDistanceSample]
+    let distance:  [HKDistanceSample]
     let heartrate: [HKHeartRateSample]
 }
-
 private struct HKWorkoutRequest: Codable {
-    let source_id: String
-    let type: String
-    let start_date: String
-    let end_date: String
-    let duration_sec: Double
-    let distance_meters: Double?
+    let source_id:          String
+    let type:               String
+    let start_date:         String
+    let end_date:           String
+    let duration_sec:       Double
+    let distance_meters:    Double?
     let active_energy_kcal: Double?
-    let avg_heartrate: Double?
-    let max_heartrate: Double?
-    var streams: HKStreams?
+    let avg_heartrate:      Double?
+    let max_heartrate:      Double?
+    var streams:            HKStreams?
 
     static func from(workout: HKWorkout, avgHR: Double?, maxHR: Double?) -> HKWorkoutRequest {
         let iso = ISO8601DateFormatter()
         return HKWorkoutRequest(
-            source_id: workout.uuid.uuidString,
-            type: workout.workoutActivityType.backendType,
-            start_date: iso.string(from: workout.startDate),
-            end_date: iso.string(from: workout.endDate),
-            duration_sec: workout.duration,
-            distance_meters: workout.totalDistance?.doubleValue(for: .meter()),
+            source_id:          workout.uuid.uuidString,
+            type:               workout.workoutActivityType.backendType,
+            start_date:         iso.string(from: workout.startDate),
+            end_date:           iso.string(from: workout.endDate),
+            duration_sec:       workout.duration,
+            distance_meters:    workout.totalDistance?.doubleValue(for: .meter()),
             active_energy_kcal: workout.totalEnergyBurned?.doubleValue(for: .kilocalorie()),
-            avg_heartrate: avgHR,
-            max_heartrate: maxHR,
-            streams: nil
+            avg_heartrate:      avgHR,
+            max_heartrate:      maxHR,
+            streams:            nil
         )
     }
 }
-
 private struct HKSyncBody: Codable {
     let workouts: [HKWorkoutRequest]
+}
+private struct HKAddedActivity: Decodable {
+    let id: Int
+    let source_id: String
+}
+private struct HKSyncResponseBody: Decodable {
+    let added_activities: [HKAddedActivity]?
 }

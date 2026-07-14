@@ -54,20 +54,17 @@ async def log_errors(request, call_next):
         raise e
 
 
-# ── Startup: init DB and warm up DataService ───────────────────────────────────
+# ── Startup: init identity DB ─────────────────────────────────────────────────
 def _init_services():
     """
-    Heavy startup work: schema migrations + DataService warm-up.
-    Runs in a daemon thread so uvicorn can start accepting requests
-    (and pass Railway's healthcheck) before this completes.
+    Initialise the central identity DB (users.db).
+    Per-user workouts DBs are created lazily at first login.
+    Runs in a daemon thread so the health endpoint responds immediately.
     """
     try:
-        from backend.services.data_service import get_data_service, DB_PATH
-        from backend.services.database import init_db
-        init_db(DB_PATH)
-        svc = get_data_service()
-        stats = svc.get_cache_stats()
-        logger.info(f"Startup complete — cache initialised: {stats}")
+        from backend.services.identity_db import init_identity_db
+        init_identity_db()
+        logger.info("Identity DB initialised — ready for logins")
     except Exception:
         logger.exception("Background startup init failed")
 
@@ -81,13 +78,13 @@ def on_startup():
 # ── Route modules ──────────────────────────────────────────────────────────────
 from backend.api.activities import router as activities_router
 from backend.api.auth import router as auth_router
-from backend.api.routes import router as routes_router
 from backend.api.import_routes import router as import_router
+from backend.api.health import router as health_router
 
 app.include_router(activities_router)
 app.include_router(auth_router)
-app.include_router(routes_router)
 app.include_router(import_router)
+app.include_router(health_router)
 
 
 # ── Utility endpoints ──────────────────────────────────────────────────────────
@@ -101,27 +98,6 @@ def root():
 def health():
     return {"status": "ok"}
 
-
-@app.get("/api/cache/stats", response_model=schemas.CacheStatusResponse)
-def cache_stats():
-    """Return current TTL cache statistics — useful for debugging."""
-    from backend.services.data_service import get_data_service
-    return get_data_service().get_cache_stats()
-
-
-@app.get("/api/cache/status", response_model=schemas.CacheStatusResponse)
-def cache_status():
-    """Roadmap alias for cache diagnostics."""
-    from backend.services.data_service import get_data_service
-    return get_data_service().get_cache_stats()
-
-
-@app.post("/api/cache/flush", response_model=schemas.CacheFlushResponse)
-def cache_flush():
-    """Manually flush all caches — useful when data is modified externally."""
-    from backend.services.data_service import get_data_service
-    get_data_service()._invalidate_all_caches()
-    return {"status": "flushed"}
 
 
 # ── Static file serving (production) ──────────────────────────────────────────

@@ -1,52 +1,158 @@
 """
-Import API — Apple Health (and future sources).
-"""
-import os
-from typing import List, Optional
-from fastapi import APIRouter, File, UploadFile, HTTPException, Header
-from pydantic import BaseModel
+Import API — Apple Health XML upload + native HealthKit sync (HK-3).
 
+All endpoints are authenticated via JWT (get_current_user).
+The shared X-Api-Key / HEALTHKIT_API_KEY path is removed (HK-3).
+"""
+from typing import List, Optional
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+
+from backend.api.deps import get_current_user
 from backend.services.apple_health_service import start_import, get_import_status
-from backend.services.database import get_conn
+from backend.services.data_service import get_data_service
 from backend.models import schemas
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/import", tags=["import"])
 
-# 256 MB limit — Apple Health exports are typically 50-200 MB
-MAX_UPLOAD_BYTES = 256 * 1024 * 1024
+MAX_UPLOAD_BYTES = 256 * 1024 * 1024  # 256 MB
 
+
+# ── Apple Health XML upload ───────────────────────────────────────────────────
 
 @router.post("/apple-health", response_model=schemas.ImportStartResponse)
-async def upload_apple_health(file: UploadFile = File(...)):
-    """
-    Accept an Apple Health export ZIP (or raw export.xml) and kick off a
-    background import.  Poll GET /api/import/apple-health/status for progress.
-    """
+async def upload_apple_health(
+    file: UploadFile = File(...),
+    user_id: str = Depends(get_current_user),
+):
+    """Accept an Apple Health export ZIP/XML and kick off a background import."""
     contents = await file.read()
     if len(contents) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="File too large (max 256 MB).")
     if not contents:
         raise HTTPException(status_code=400, detail="Empty file.")
-
-    result = start_import(contents, file.filename or "export.zip")
+    result = start_import(contents, file.filename or "export.zip", user_id=user_id)
     return result
 
 
 @router.get("/apple-health/status", response_model=schemas.ImportStatusResponse)
-def apple_health_status():
+def apple_health_status(user_id: str = Depends(get_current_user)):
     """Poll for import progress."""
-    return get_import_status()
+    return get_import_status(user_id)
+
+
+# ── HealthKit native sync (iOS companion app) ──────────────────────────────────
+
+class HKLocationSample(BaseModel):
+    t:   float
+    lat: float
+    lng: float
+    alt: Optional[float] = None
+
+
+class HKHeartRateSample(BaseModel):
+    t:   float
+    bpm: float
+
+
+class HKDistanceSample(BaseModel):
+    t: float
+    m: float
+
+
+class HKStreams(BaseModel):
+    locations: List[HKLocationSample] = []
+    distance:  List[HKDistanceSample] = []
+    heartrate: List[HKHeartRateSample] = []
+
+
+class HKSwimLap(BaseModel):
+    lap_number:       int
+    duration_seconds: float
+    distance_meters:  Optional[float] = None
+    stroke_type:      Optional[str] = None
+    stroke_count:     Optional[int] = None
+    avg_heartrate:    Optional[float] = None
+    is_rest:          bool = False
+
+
+class HKWorkout(BaseModel):
+    source_id:          str
+    type:               str
+    start_date:         str
+    end_date:           str
+    duration_sec:       float
+    distance_meters:    Optional[float] = None
+    active_energy_kcal: Optional[float] = None
+    avg_heartrate:      Optional[float] = None
+    max_heartrate:      Optional[float] = None
+    pool_length_meters: Optional[float] = None
+    swim_laps:          List[HKSwimLap] = []
+    streams:            Optional[HKStreams] = None
+
+
+class HKSyncRequest(BaseModel):
+    workouts: List[HKWorkout]
+
+
+class HKAddedActivity(BaseModel):
+    id:        int
+    source_id: str
+
+
+class HKSyncResponse(BaseModel):
+    added:            int
+    skipped:          int
+    splits_built:     int = 0
+    # Newly inserted activities (id ↔ HK UUID) so the iOS app can fetch the
+    # comparison verdict for the just-finished workout and notify (CMP-5).
+    added_activities: List[HKAddedActivity] = []
+
+
+# ── Daily health metrics sync (BIO-2) ──────────────────────────────────────────
+
+class HKMetricSample(BaseModel):
+    metric:    str                     # canonical slug, see health_metrics_service.KNOWN_METRICS
+    date:      str                     # YYYY-MM-DD, user-local day
+    value:     float
+    min:       Optional[float] = None
+    max:       Optional[float] = None
+    source_id: Optional[str] = None
+
+
+class HKMetricSyncRequest(BaseModel):
+    metrics: List[HKMetricSample]
+
+
+class HKMetricSyncResponse(BaseModel):
+    added:           int
+    updated:         int
+    skipped:         int
+    unknown_metrics: List[str] = []
+
+
+@router.post("/healthkit/metrics", response_model=HKMetricSyncResponse)
+def healthkit_metrics_sync(
+    body: HKMetricSyncRequest,
+    user_id: str = Depends(get_current_user),
+):
+    """Batched upsert of daily health metrics (resting HR, HRV, sleep, …)."""
+    from backend.services import health_metrics_service
+
+    svc = get_data_service(user_id)
+    result = health_metrics_service.upsert_metrics(
+        svc._conn(), [s.model_dump() for s in body.metrics]
+    )
+    if result["added"] or result["updated"]:
+        svc.get_analytics_cache().flush()
+    return result
 
 
 @router.get("/healthkit/missing-streams")
-def healthkit_missing_streams(x_api_key: Optional[str] = Header(default=None)):
-    """
-    Diagnostic: which Apple Health distance activities have no splits computed
-    yet. For outdoor activities this means no GPS route was ever fetched; for
-    indoor activities it means no distance samples were fetched either.
-    """
-    _require_healthkit_key(x_api_key)
-    conn = get_conn()
+def healthkit_missing_streams(user_id: str = Depends(get_current_user)):
+    """Diagnostic: activities missing splits."""
+    svc = get_data_service(user_id)
+    conn = svc._conn()
     DIST_TYPES = ('Run', 'Ride', 'Walk', 'Hike', 'Swim', 'VirtualRun', 'TrailRun', 'VirtualRide')
     rows = conn.execute(
         f"""
@@ -62,103 +168,23 @@ def healthkit_missing_streams(x_api_key: Optional[str] = Header(default=None)):
         """,
         DIST_TYPES
     ).fetchall()
-    return {
-        "count": len(rows),
-        "activities": [dict(r) for r in rows],
-    }
-
-
-# ── HealthKit native sync (iOS companion app) ──────────────────────────────────
-
-class HKLocationSample(BaseModel):
-    """One GPS point from HKWorkoutRoute. `t` is seconds since workout start."""
-    t:   float
-    lat: float
-    lng: float
-    alt: Optional[float] = None
-
-
-class HKHeartRateSample(BaseModel):
-    t:   float
-    bpm: float
-
-
-class HKDistanceSample(BaseModel):
-    """Indoor distance sample from distanceWalkingRunning/distanceCycling."""
-    t: float
-    m: float   # cumulative meters since workout start
-
-
-class HKStreams(BaseModel):
-    locations: List[HKLocationSample] = []
-    distance:  List[HKDistanceSample] = []
-    heartrate: List[HKHeartRateSample] = []
-
-
-class HKSwimLap(BaseModel):
-    lap_number:       int
-    duration_seconds: float
-    distance_meters:  Optional[float] = None
-    stroke_type:      Optional[str] = None   # freestyle|backstroke|breaststroke|butterfly|kickboard|mixed
-    stroke_count:     Optional[int] = None
-    avg_heartrate:    Optional[float] = None
-    is_rest:          bool = False
-
-
-class HKWorkout(BaseModel):
-    """Single workout sent from the iOS HealthKit sync engine."""
-    source_id: str              # stable local UUID from HK (used for dedup)
-    type: str                   # e.g. "WeightTraining", "Running"
-    start_date: str             # ISO8601: "2026-04-01T07:30:00-07:00"
-    end_date: str
-    duration_sec: float
-    distance_meters: Optional[float] = None
-    active_energy_kcal: Optional[float] = None
-    avg_heartrate: Optional[float] = None
-    max_heartrate: Optional[float] = None
-    pool_length_meters: Optional[float] = None
-    swim_laps: List[HKSwimLap] = []
-    # Optional — when present, backend computes splits + fastest segments.
-    streams: Optional[HKStreams] = None
-
-
-class HKSyncRequest(BaseModel):
-    workouts: List[HKWorkout]
-
-
-class HKSyncResponse(BaseModel):
-    added:        int
-    skipped:      int
-    splits_built: int = 0   # how many workouts got splits computed
-
-
-def _require_healthkit_key(x_api_key: Optional[str] = Header(default=None)):
-    expected = os.getenv("HEALTHKIT_API_KEY", "")
-    if not expected:
-        return  # key not configured — open in dev
-    if x_api_key != expected:
-        raise HTTPException(status_code=401, detail="Invalid API key.")
+    return {"count": len(rows), "activities": [dict(r) for r in rows]}
 
 
 @router.post("/healthkit", response_model=HKSyncResponse)
-def healthkit_sync(body: HKSyncRequest, x_api_key: Optional[str] = Header(default=None)):
-    """
-    Native iOS HealthKit sync endpoint.
-    The iOS app sends batches of workouts as JSON; we upsert them into SQLite.
-    Uses X-Api-Key header for auth (set HEALTHKIT_API_KEY env var on Railway).
-    """
-    _require_healthkit_key(x_api_key)
-
-    import hashlib
+def healthkit_sync(
+    body: HKSyncRequest,
+    user_id: str = Depends(get_current_user),
+):
+    """Native iOS HealthKit sync — authenticated via Bearer JWT (HK-3)."""
     import polyline as _polyline
     from datetime import datetime
-    from backend.services.data_service import get_data_service
+    from backend.services.apple_health_service import hk_activity_id
     from backend.services.splits_service import (
         from_healthkit_streams, from_distance_stream, compute_splits,
     )
 
     def _encode_polyline(locations: list, max_points: int = 1500) -> str:
-        """Encode (lat, lng) points as a Google polyline, evenly downsampled."""
         if not locations:
             return ""
         n = len(locations)
@@ -168,21 +194,15 @@ def healthkit_sync(body: HKSyncRequest, x_api_key: Optional[str] = Header(defaul
             step = n / max_points
             pts = [(locations[int(i * step)]['lat'], locations[int(i * step)]['lng'])
                    for i in range(max_points)]
-            # Always include the last point so the line closes visually.
             last = locations[-1]
             if pts[-1] != (last['lat'], last['lng']):
                 pts.append((last['lat'], last['lng']))
         return _polyline.encode(pts)
 
-    def _hk_id(source_id: str) -> int:
-        # 6 bytes (48 bits) — fits within JS Number.MAX_SAFE_INTEGER
-        digest = hashlib.sha256(f"hk:{source_id}".encode()).digest()
-        n = int.from_bytes(digest[:6], "big")
-        return -(n or 1)
-
+    svc = get_data_service(user_id)
+    conn = svc._conn()
     added = skipped = splits_built = 0
-    conn = get_conn()
-    svc = get_data_service()
+    added_activities: list = []
 
     for w in body.workouts:
         if w.duration_sec < 60:
@@ -190,7 +210,6 @@ def healthkit_sync(body: HKSyncRequest, x_api_key: Optional[str] = Header(defaul
             continue
 
         duration_min = w.duration_sec / 60.0
-
         distance_m = w.distance_meters or 0.0
         distance_miles = distance_m / 1609.344
         pace = None
@@ -206,12 +225,8 @@ def healthkit_sync(body: HKSyncRequest, x_api_key: Optional[str] = Header(defaul
             continue
 
         activity_name = f"{w.type} – {date_str}"
-
-        # Dedup: the XML import and HK sync generate different IDs for the
-        # same workout. Before inserting, look for an existing apple_health
-        # row with the same start time + type and reuse its ID so we don't
-        # create parallel duplicates.
         start_ts = start_dt.timestamp()
+
         match = conn.execute(
             """SELECT id FROM activities
                 WHERE source = 'apple_health'
@@ -225,7 +240,7 @@ def healthkit_sync(body: HKSyncRequest, x_api_key: Optional[str] = Header(defaul
             activity_id = match["id"]
             existing = match
         else:
-            activity_id = _hk_id(w.source_id)
+            activity_id = hk_activity_id(w.source_id)
             existing = conn.execute(
                 "SELECT id FROM activities WHERE id = ?", (activity_id,)
             ).fetchone()
@@ -237,31 +252,25 @@ def healthkit_sync(body: HKSyncRequest, x_api_key: Optional[str] = Header(defaul
                     distance_miles, moving_time_min, elapsed_time_min,
                     pace, average_speed, average_heartrate, max_heartrate,
                     total_elevation_gain, date, start_date,
-                    has_heartrate, source, trainer, pool_length_meters
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    has_heartrate, source, trainer, pool_length_meters, hk_source_id
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, (
-                activity_id,
-                activity_name,
-                w.type,
-                w.type,
+                activity_id, activity_name, w.type, w.type,
                 round(distance_miles, 4) if distance_miles else 0.0,
-                round(duration_min, 2),
-                round(duration_min, 2),
+                round(duration_min, 2), round(duration_min, 2),
                 round(pace, 4) if pace else None,
                 round(distance_m / w.duration_sec, 4) if distance_m and w.duration_sec else 0.0,
                 round(w.avg_heartrate, 1) if w.avg_heartrate else None,
                 round(w.max_heartrate, 1) if w.max_heartrate else None,
-                0.0,  # elevation filled in from streams below, if available
-                date_str,
-                start_date_local,
+                0.0, date_str, start_date_local,
                 1 if w.avg_heartrate else 0,
-                "apple_health",
-                0,
+                "apple_health", 0,
                 round(w.pool_length_meters, 2) if w.pool_length_meters else None,
+                w.source_id,
             ))
             added += 1
+            added_activities.append({"id": activity_id, "source_id": w.source_id})
 
-        # Insert swim laps (upsert: delete existing laps then re-insert)
         if w.swim_laps:
             conn.execute("DELETE FROM swim_laps WHERE activity_id = ?", (activity_id,))
             for lap in w.swim_laps:
@@ -283,22 +292,19 @@ def healthkit_sync(body: HKSyncRequest, x_api_key: Optional[str] = Header(defaul
                     (round(w.pool_length_meters, 2), activity_id)
                 )
         else:
-            # Existing row. Only worth continuing if we have streams to apply.
             has_locations = bool(w.streams and w.streams.locations)
             has_distance  = bool(w.streams and w.streams.distance)
             if not has_locations and not has_distance:
                 skipped += 1
                 continue
 
-        # ── Streams: compute splits + fastest segments (and polyline if GPS) ─
         bundle = None
         locs = []
         if w.streams and w.streams.locations:
             locs = [loc.model_dump() for loc in w.streams.locations]
-            hrs  = [hr.model_dump()  for hr in w.streams.heartrate] if w.streams.heartrate else None
+            hrs  = [hr.model_dump() for hr in w.streams.heartrate] if w.streams.heartrate else None
             bundle = from_healthkit_streams(locs, hrs)
         elif w.streams and w.streams.distance:
-            # Indoor path: treadmill / stationary bike — no GPS but distance samples.
             dists = [d.model_dump() for d in w.streams.distance]
             hrs   = [hr.model_dump() for hr in w.streams.heartrate] if w.streams.heartrate else None
             bundle = from_distance_stream(dists, hrs)
@@ -316,7 +322,6 @@ def healthkit_sync(body: HKSyncRequest, x_api_key: Optional[str] = Header(defaul
                 svc.compute_and_save_summaries(activity_id)
                 splits_built += 1
 
-            # GPS-only: polyline + lat/lng.
             if locs:
                 polyline_str = _encode_polyline(locs)
                 start = locs[0]
@@ -325,13 +330,8 @@ def healthkit_sync(body: HKSyncRequest, x_api_key: Optional[str] = Header(defaul
                 conn.execute(
                     """
                     UPDATE activities
-                       SET map_polyline = ?,
-                           start_latlng = ?,
-                           end_latlng   = ?,
-                           start_lat    = ?,
-                           start_lng    = ?,
-                           end_lat      = ?,
-                           end_lng      = ?,
+                       SET map_polyline = ?, start_latlng = ?, end_latlng = ?,
+                           start_lat = ?, start_lng = ?, end_lat = ?, end_lng = ?,
                            total_elevation_gain = CASE
                                WHEN ? > 0 THEN ? ELSE total_elevation_gain
                            END
@@ -341,22 +341,17 @@ def healthkit_sync(body: HKSyncRequest, x_api_key: Optional[str] = Header(defaul
                         polyline_str or None,
                         f"[{start['lat']},{start['lng']}]",
                         f"[{end['lat']},{end['lng']}]",
-                        start['lat'], start['lng'],
-                        end['lat'],   end['lng'],
-                        total_elev_m, round(total_elev_m, 2),
-                        activity_id,
+                        start['lat'], start['lng'], end['lat'], end['lng'],
+                        total_elev_m, round(total_elev_m, 2), activity_id,
                     )
                 )
             else:
-                # Indoor: mark trainer flag so the detail page knows there's no map.
-                conn.execute(
-                    "UPDATE activities SET trainer = 1 WHERE id = ?",
-                    (activity_id,)
-                )
+                conn.execute("UPDATE activities SET trainer = 1 WHERE id = ?", (activity_id,))
 
     conn.commit()
 
     if added > 0 or splits_built > 0:
         svc._invalidate_all_caches()
 
-    return {"added": added, "skipped": skipped, "splits_built": splits_built}
+    return {"added": added, "skipped": skipped, "splits_built": splits_built,
+            "added_activities": added_activities}

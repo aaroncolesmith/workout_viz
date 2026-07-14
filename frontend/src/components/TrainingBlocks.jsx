@@ -7,7 +7,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getBlocks, createBlock, updateBlock, deleteBlock } from '../utils/api';
-import { formatPace, parseLocalDate } from '../utils/format';
+import { formatPace, parseLocalDate, formatDate } from '../utils/format';
 
 const BLOCK_TYPES = ['base', 'build', 'peak', 'taper', 'race'];
 
@@ -234,7 +234,7 @@ function BlockCard({ block, onEdit }) {
             {block.name}
           </div>
           <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 2 }}>
-            {block.start_date} → {block.end_date}
+            {formatDate(block.start_date)} → {formatDate(block.end_date)}
           </div>
         </div>
 
@@ -346,7 +346,7 @@ function BlockTimeline({ blocks, onSelect }) {
           return (
             <div
               key={block.id}
-              title={`${block.name} (${block.start_date} – ${block.end_date})`}
+              title={`${block.name} (${formatDate(block.start_date)} – ${formatDate(block.end_date)})`}
               onClick={() => onSelect(block)}
               style={{
                 position: 'absolute',
@@ -371,8 +371,8 @@ function BlockTimeline({ blocks, onSelect }) {
       </div>
       {/* Date labels */}
       <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
-        <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{sorted[0].start_date}</span>
-        <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{sorted[sorted.length - 1].end_date}</span>
+        <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{formatDate(sorted[0].start_date)}</span>
+        <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{formatDate(sorted[sorted.length - 1].end_date)}</span>
       </div>
     </div>
   );

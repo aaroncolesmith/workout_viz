@@ -2,43 +2,48 @@
 
 ## What this is
 A SwiftUI wrapper that:
-1. Embeds your Railway-hosted web app in a full-screen WKWebView
+1. Embeds your Fly.io-hosted web app in a full-screen WKWebView
 2. Syncs HealthKit workouts to the backend automatically on foreground
 
 ## Prerequisites
 - Xcode 15+
 - An Apple Developer account (free works for personal device testing)
-- Your Railway app deployed (see `/RAILWAY.md`)
+- Your Fly.io app deployed (see `fly.toml` in repo root)
 
 ---
 
-## Part 1 — Railway Deployment
+## Part 1 — Fly.io Deployment
 
-### 1. Push to GitHub
+### 1. Install flyctl and log in
 ```bash
-git add Dockerfile .dockerignore railway.toml
-git commit -m "Add Railway deployment config"
-git push
+brew install flyctl
+flyctl auth login
 ```
 
-### 2. Create Railway project
-1. Go to railway.app → New Project → Deploy from GitHub repo
-2. Select your `workout_viz` repo
-3. Railway detects the `Dockerfile` automatically
+### 2. Create the app and persistent volume
+```bash
+flyctl apps create workout-viz
+flyctl volumes create workout_data --app workout-viz --region ewr --size 3 --yes
+```
 
-### 3. Configure environment variables in Railway
-| Variable | Value |
-|---|---|
-| `STRAVA_CLIENT_ID` | From strava.com/settings/api |
-| `STRAVA_CLIENT_SECRET` | From strava.com/settings/api |
-| `STRAVA_REDIRECT_URI` | `https://workoutviz-production.up.railway.app/auth/callback` |
-| `HEALTHKIT_API_KEY` | Any strong random string (e.g. `openssl rand -hex 32`) |
+### 3. Set secrets
+```bash
+flyctl secrets set \
+  DB_ENCRYPTION_MASTER_KEY=$(openssl rand -hex 32) \
+  --app workout-viz
+```
 
-### 4. Add a persistent volume
-In Railway: your service → Volumes → Mount at `/data`
+Keep an offline backup of `DB_ENCRYPTION_MASTER_KEY` — losing it makes all
+user data unrecoverable. To rotate it later, see
+`backend/scripts/rotate_master_key.py`.
 
-### 5. Note your Railway URL
-It looks like: `https://workout-viz-production.up.railway.app`
+### 4. Deploy
+```bash
+flyctl deploy --app workout-viz
+```
+
+### 5. Note your URL
+`https://workout-viz.fly.dev`
 
 ---
 
@@ -52,23 +57,30 @@ It looks like: `https://workout-viz-production.up.railway.app`
 - Bundle ID: `com.yourname.workoutviz`
 
 ### 2. Add the Swift source files
-Drag all files from `ios/WorkoutViz/` into the Xcode project:
+Drag all files from `ios/WorkoutViz/` into the Xcode project (or open the
+checked-in `ios/WorkoutViz.xcodeproj` directly):
 - `WorkoutVizApp.swift` — replace the generated App file
 - `ContentView.swift` — replace the generated ContentView
 - `HealthKitManager.swift`
 - `SyncEngine.swift`
+- `AuthService.swift`, `AccountView.swift`, `KeychainHelper.swift`
 - `Config.swift`
 
 ### 3. Update Config.swift
-Edit the two constants:
+The backend URL should already point to Fly.io. Verify:
 ```swift
-static let backendURL = "https://workoutviz-production.up.railway.app"
-static let healthkitAPIKey = "the-key-you-set-in-railway"
+static let backendURL = "https://workout-viz.fly.dev"
 ```
+There's no sign-in flow: on first launch the app silently registers a device
+token with the backend (`POST /api/auth/device`) and stores it in the
+Keychain forever. No Apple/Google account, no bundle-id-matching secret to
+configure.
 
-### 4. Add HealthKit capability
+### 4. Add capabilities
 - Select your target → Signing & Capabilities → + Capability → HealthKit
-- Check "Clinical Health Records" is NOT checked (we don't need it)
+  (leave "Clinical Health Records" unchecked)
+- Do **not** add "Sign in with Apple" — it requires a paid Apple Developer
+  Program membership and this app doesn't use it.
 
 ### 5. Add Info.plist keys
 Add these two keys under your target's Info tab:
@@ -90,15 +102,20 @@ Target → Signing & Capabilities → Team → your Apple ID
 
 ## How syncing works
 
-1. On first launch, app requests HealthKit permission
-2. Fetches workouts from the last 365 days, enriches each with HR samples
-3. POSTs to `POST /api/import/healthkit` in batches of 50
-4. On every foreground, syncs any workouts newer than the last sync (throttled to max once per 30 min)
-5. After sync completes, refresh the web view to see new data
+1. On first launch the app silently registers a device token with the
+   backend (`POST /api/auth/device`); the token is stored in the Keychain and
+   injected into the WKWebView — no user interaction
+2. App requests HealthKit permission, then runs an anchored incremental sync
+   (initial window: last ~6 months; "Load 2 years" backfill available)
+3. Workouts are POSTed to `POST /api/import/healthkit` in batches of 50 with
+   the Bearer token; deletions in HealthKit are mirrored to the backend
+4. The HealthKit anchor only advances when every upload/deletion succeeded,
+   so transient failures are retried on the next sync
+5. On every foreground the app re-registers if it somehow lost its token,
+   then syncs
 
-## Strava OAuth in the app
+## Strava (dormant)
 
-The web app's Strava OAuth flow (`/auth/callback`) needs the Railway URL as the redirect URI. Update it:
-1. Go to strava.com/settings/api
-2. Set Authorization Callback Domain to your Railway domain (e.g. `workout-viz-production.up.railway.app`)
-3. Update `STRAVA_REDIRECT_URI` in Railway env vars to match
+Strava ingestion is shelved. Its routes only register when the
+`STRAVA_AUTH_ENABLED=true` secret is set, along with the `STRAVA_*` vars in
+`.env.example`.

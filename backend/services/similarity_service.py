@@ -11,7 +11,6 @@ import logging
 from typing import Optional, List, Dict
 from sklearn.preprocessing import MinMaxScaler
 
-from backend.services.data_service import get_data_service
 
 logger = logging.getLogger(__name__)
 
@@ -46,23 +45,13 @@ def get_route_waypoints(polyline_str: str, num_points: int = 5) -> List[tuple]:
 def find_similar_activities(
     activity_id: int,
     top_n: int = 5,
+    *,
+    data_service,
 ) -> List[dict]:
+    """Find the top-N most similar activities to the given activity.
+
+    data_service: the caller's per-user DataService instance.
     """
-    Find the top-N most similar activities to the given activity.
-
-    Scores based on:
-    - Distance (35%)
-    - Pace (30%)
-    - HR (15%)
-    - Elevation (10%)
-    - Duration (10%)
-
-    Route matching is applied as a multiplicative factor (0.7x to 1.0x).
-    Trainer/Indoor workouts skip route matching.
-
-    Results are cached per (activity_id, top_n) for up to 5 minutes.
-    """
-    data_service = get_data_service()
     cache = data_service.get_analytics_cache()
     cache_key = f"similar:{activity_id}:{top_n}"
 

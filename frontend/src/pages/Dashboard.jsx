@@ -7,13 +7,17 @@ import {
 import { useQuery } from '@tanstack/react-query';
 import { getOverview, getTrends, getBestPRs } from '../utils/api';
 import {
-  formatPace, formatDistance, formatHR, activityColor, formatShortDate, formatActivityName,
+  formatPace, formatDistance, formatHR, activityColor, formatShortDate, formatDate, formatActivityName,
 } from '../utils/format';
 import ActivityCalendar from '../components/ActivityCalendar';
 import TypeDistribution from '../components/TypeDistribution';
 import BestSegmentsTrend from '../components/BestSegmentsTrend';
 import FitnessChart from '../components/FitnessChart';
 import ReadinessCard from '../components/ReadinessCard';
+import ReadinessHistory from '../components/ReadinessHistory';
+import EfficiencyTrend from '../components/EfficiencyTrend';
+import WeeklyDigest from '../components/WeeklyDigest';
+import CorrelationCards from '../components/CorrelationCards';
 import RacePredictor from '../components/RacePredictor';
 import SafeResponsiveContainer from '../components/SafeResponsiveContainer';
 import { useChartZoom } from '../hooks/useChartZoom';
@@ -86,7 +90,7 @@ function PRSportGroup({ label, accent, distances, bestPRs, matchesType, onSelect
             </div>
             {pr && (
               <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', marginTop: 4 }}>
-                {pr.pace_str} · {pr.date}
+                {pr.pace_str} · {formatDate(pr.date)}
               </div>
             )}
           </button>
@@ -325,6 +329,10 @@ export default function Dashboard() {
       {/* ── Readiness Banner ── */}
       <ReadinessCard />
 
+      {/* ── Weekly digest + correlation findings (COR-3/COR-4) ── */}
+      <WeeklyDigest />
+      <CorrelationCards />
+
       {/* ── Calendar Heatmap + Type Breakdown ── */}
 
       <div className="dashboard-split-grid" style={{ marginBottom: 'var(--space-xl)' }}>
@@ -335,6 +343,12 @@ export default function Dashboard() {
       {/* ── Fitness & Fatigue Chart ── */}
       <div className="glass-card chart-container" style={{ marginBottom: 'var(--space-xl)' }}>
         <FitnessChart />
+      </div>
+
+      {/* ── Readiness history + efficiency trend (RDY-4 / COR-2) ── */}
+      <div className="dashboard-charts-grid" style={{ marginBottom: 'var(--space-xl)', minWidth: 0 }}>
+        <ReadinessHistory />
+        <EfficiencyTrend />
       </div>
 
       {/* ── Race Predictor ── */}
@@ -433,7 +447,6 @@ export default function Dashboard() {
                   return (
                     <div style={{ background: '#0d0d0f', border: '1px solid #2a2a32', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
                       <div style={{ fontWeight: 600, marginBottom: 4 }}>{formatActivityName(d)}</div>
-                      <div style={{ color: '#94a3b8' }}>{d.date}</div>
                       <div style={{ color: '#26c6f9', fontFamily: "var(--font-display)" }}>
                         {formatPace(d.pace)} /mi · {formatDistance(d.distance_miles)} mi
                       </div>
@@ -532,7 +545,6 @@ export default function Dashboard() {
                   return (
                     <div style={{ background: '#0d0d0f', border: '1px solid #2a2a32', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
                       <div style={{ fontWeight: 600 }}>{formatActivityName(d)}</div>
-                      <div style={{ color: '#94a3b8' }}>{d.date}</div>
                       <div style={{ color: '#f472b6', fontFamily: "var(--font-display)" }}>
                         Avg {formatHR(d.average_heartrate)} bpm · Max {formatHR(d.max_heartrate)} bpm
                       </div>
@@ -591,7 +603,6 @@ export default function Dashboard() {
                   return (
                     <div style={{ background: '#0d0d0f', border: '1px solid #2a2a32', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
                       <div style={{ fontWeight: 600 }}>{formatActivityName(d)}</div>
-                      <div style={{ color: '#94a3b8' }}>{d.date}</div>
                       <div style={{ fontFamily: "var(--font-display)" }}>
                         <span style={{ color: '#26c6f9' }}>{formatPace(d.pace)} /mi</span>{' · '}
                         <span style={{ color: '#f472b6' }}>{formatHR(d.average_heartrate)} bpm</span>

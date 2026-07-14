@@ -1,14 +1,19 @@
 """
-splits_service.py — Source-agnostic 0.1-mile split computation.
+splits_service.py — Source-agnostic split computation.
 
 Takes a standardized stream bundle (time + cumulative distance + optional
 heartrate / cadence / velocity / altitude arrays, all indexed identically)
-and buckets it into 0.1-mile splits matching the shape that Strava-sourced
-activities already produce.
+and buckets it into fixed-distance splits.
 
 Adapters convert Strava's `streams` dict or HealthKit's (locations, hr)
 timeseries into the standardized shape. Both then call the same splitter,
 so there is exactly one implementation of the bucketing math.
+
+Grain: new imports bucket at BUCKET_MILES (0.05 mi ≈ 80 m — fine enough for
+sharp fastest-segment windows, coarse enough that each bucket still holds
+several GPS/HR samples).  Historical rows in the splits table may be the
+legacy 0.1-mi grain; consumers must NOT assume a grain — use
+`rolling_fastest_segments`, which derives everything from the rows.
 """
 from __future__ import annotations
 
@@ -18,7 +23,7 @@ from typing import Optional, List, Dict, Any
 
 
 METERS_PER_MILE = 1609.344
-BUCKET_MILES = 0.1
+BUCKET_MILES = 0.05
 
 
 @dataclass
@@ -42,7 +47,7 @@ def compute_splits(
     total_distance_miles: Optional[float] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Bucket a stream bundle into 0.1-mile splits.
+    Bucket a stream bundle into BUCKET_MILES splits.
 
     Returns a list of dicts matching the `splits` table schema used by the
     rest of the app (the same shape that Strava sync produces).
@@ -60,10 +65,13 @@ def compute_splits(
     if max_bucket == 0:
         return []
 
-    # Group sample indexes by bucket number (1-indexed).
+    # Group sample indexes by bucket number (1-indexed).  A sample exactly on
+    # a boundary belongs to the bucket it COMPLETES (m in (g·(b−1), g·b] → b),
+    # otherwise the final sample of every workout falls into a bucket past
+    # max_bucket and its time silently vanishes.
     buckets: Dict[int, List[int]] = {}
     for i, m in enumerate(miles):
-        b = int(m / BUCKET_MILES) + 1
+        b = int(math.ceil(m / BUCKET_MILES - 1e-9))
         if 1 <= b <= max_bucket:
             buckets.setdefault(b, []).append(i)
 
@@ -103,11 +111,15 @@ def compute_splits(
             if alts:
                 elev_gain = max(0.0, max(alts) - min(alts))
 
-        time_int = max(0, int(round(time_secs)))
+        # Sub-second precision matters at fine grain: a 0.05-mi bucket takes
+        # ~24 s at 8 min/mi, so int-rounding every bucket would accumulate
+        # real error over a marathon of windows.
+        time_secs = max(0.0, round(time_secs, 2))
+        time_int = int(round(time_secs))
         splits.append({
             '0.1_mile':              b,
             'split_number':          b,
-            'time_seconds':          time_int,
+            'time_seconds':          time_secs,
             'time_minutes':          f"{time_int // 60:02d}:{time_int % 60:02d}",
             'max_heartrate':         _max(bundle.heartrate),
             'avg_heartrate':         _mean(bundle.heartrate),
@@ -116,12 +128,84 @@ def compute_splits(
             'elevation_gain_meters': elev_gain,
             'activity_id':           activity_id,
             'activity_name':         activity_name,
-            'total_distance_miles':  round(b * BUCKET_MILES, 1),
+            'total_distance_miles':  round(b * BUCKET_MILES, 3),
             'date':                  date_str,
             'id':                    activity_id,
         })
 
     return splits
+
+
+# ── Grain-agnostic rolling fastest segments ──────────────────────────────────
+
+def rolling_fastest_segments(
+    splits: List[Dict[str, Any]],
+    targets: List[tuple],
+) -> List[Dict[str, Any]]:
+    """
+    Fastest rolling window per target distance, over splits of ANY grain —
+    legacy 0.1-mi rows and new BUCKET_MILES rows are handled identically
+    because everything derives from the rows' own cumulative distances.
+
+    Two-pointer over cumulative (distance, time): each window is the
+    tightest run of consecutive splits covering ≥ target miles, so a GPS
+    dropout (missing bucket) widens the recorded distance rather than
+    silently compressing a "1 mile" into 0.9.  The window's time is scaled
+    to the exact target (time × target/actual) — pace-preserving, and
+    strictly less quantization error than the old fixed-bucket-count sum.
+
+    targets: [(miles, label), …].  Returns one dict per achievable target:
+      {distance_miles, label, time_seconds, start_mile, end_mile,
+       avg_heartrate, elevation_gain_meters}
+    """
+    rows = sorted(splits, key=lambda s: float(s.get("split_number") or 0))
+    if not rows:
+        return []
+
+    n = len(rows)
+    # Prefix arrays: d[k] / t[k] = cumulative miles / seconds after k splits.
+    d = [0.0] * (n + 1)
+    t = [0.0] * (n + 1)
+    for k, r in enumerate(rows):
+        d[k + 1] = float(r.get("total_distance_miles") or 0)
+        t[k + 1] = t[k] + float(r.get("time_seconds") or 0)
+    total_dist = d[n]
+
+    results = []
+    for target_miles, label in targets:
+        if total_dist < target_miles * 0.95:
+            continue
+
+        best = None       # (scaled_time, a, b)
+        a = 0
+        for b in range(1, n + 1):
+            # Largest window start a with d[b] - d[a] >= target (a only moves right).
+            while a + 1 <= b and d[b] - d[a + 1] >= target_miles:
+                a += 1
+            span = d[b] - d[a]
+            if span < target_miles:
+                continue
+            scaled = (t[b] - t[a]) * (target_miles / span)
+            if best is None or scaled < best[0]:
+                best = (scaled, a, b)
+
+        if best is None:
+            continue
+        scaled_time, a, b = best
+        window = rows[a:b]
+        hrs = [float(r["avg_heartrate"]) for r in window if r.get("avg_heartrate")]
+        results.append({
+            "distance_miles":        target_miles,
+            "label":                 label,
+            "time_seconds":          round(scaled_time, 1),
+            "start_mile":            round(d[a], 2),
+            "end_mile":              round(d[b], 2),
+            "avg_heartrate":         round(sum(hrs) / len(hrs), 1) if hrs else None,
+            "elevation_gain_meters": round(sum(float(r.get("elevation_gain_meters") or 0)
+                                              for r in window), 2),
+        })
+
+    return results
 
 
 # ── Adapter: Strava streams → StreamBundle ───────────────────────────────────

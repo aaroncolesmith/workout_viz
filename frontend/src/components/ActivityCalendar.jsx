@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { getCalendar } from '../utils/api';
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -25,6 +25,7 @@ export default function ActivityCalendar() {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tooltip, setTooltip] = useState(null);
+  const scrollRef = useRef(null);
 
   useEffect(() => {
     getCalendar(12)
@@ -32,6 +33,14 @@ export default function ActivityCalendar() {
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
+
+  // Jump straight to the most recent week — the grid renders oldest-first,
+  // so without this the calendar opens showing a year-old data by default.
+  useEffect(() => {
+    if (!loading && scrollRef.current) {
+      scrollRef.current.scrollLeft = scrollRef.current.scrollWidth;
+    }
+  }, [loading]);
 
   const { grid, monthLabels, maxMiles, weeks } = useMemo(() => {
     // Build a map of date -> data
@@ -104,7 +113,7 @@ export default function ActivityCalendar() {
         <span className="section-subtitle">Last 12 months</span>
       </div>
 
-      <div style={{ overflowX: 'auto', padding: '0 var(--space-md) var(--space-md)' }}>
+      <div ref={scrollRef} style={{ overflowX: 'auto', padding: '0 var(--space-md) var(--space-md)' }}>
         <svg
           width={svgWidth}
           height={svgHeight}
