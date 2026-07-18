@@ -54,6 +54,45 @@ def delete_account(user_id: str = Depends(get_current_user)):
 
 # ── Data export (COMP-2) ──────────────────────────────────────────────────────
 
+# Every user-data table in the per-device DB.  If a migration adds a table,
+# it belongs here — the export IS the data-portability promise, and daily
+# biometrics (health_metrics) are the most personal rows in the DB.
+_EXPORT_TABLES = {
+    "activities":       "SELECT * FROM activities",
+    "splits":           "SELECT * FROM splits",
+    "summaries":        "SELECT * FROM summaries",
+    "pr_events":        "SELECT * FROM pr_events",
+    "swim_laps":        "SELECT * FROM swim_laps",
+    "health_metrics":   "SELECT * FROM health_metrics",
+    "routes":           "SELECT * FROM routes",
+    "route_activities": "SELECT * FROM route_activities",
+    "training_blocks":  "SELECT * FROM training_blocks",
+    "user_settings":    "SELECT * FROM user_settings",
+    "sync_log":         "SELECT * FROM sync_log",
+}
+
+
+def build_export_zip(conn, user_id: str) -> io.BytesIO:
+    """Build the COMP-2 export archive; split out so tests can open the ZIP."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        manifest = {
+            "export_date": datetime.now(timezone.utc).isoformat(),
+            "user_id":     user_id,
+            "app":         "Volken",
+            "row_counts":  {},
+        }
+        for name, query in _EXPORT_TABLES.items():
+            rows = [dict(r) for r in conn.execute(query).fetchall()]
+            manifest["row_counts"][name] = len(rows)
+            zf.writestr(f"{name}.json", json.dumps(rows, indent=2, default=str))
+
+        zf.writestr("manifest.json", json.dumps(manifest, indent=2))
+
+    buf.seek(0)
+    return buf
+
+
 @router.get("/account/export")
 def export_account(user_id: str = Depends(get_current_user)):
     """
@@ -63,32 +102,7 @@ def export_account(user_id: str = Depends(get_current_user)):
     from backend.services.data_service import get_data_service
 
     svc = get_data_service(user_id)
-    conn = svc._conn()
-
-    tables = {
-        "activities": "SELECT * FROM activities",
-        "splits":     "SELECT * FROM splits",
-        "pr_events":  "SELECT * FROM pr_events",
-        "swim_laps":  "SELECT * FROM swim_laps",
-        "sync_log":   "SELECT * FROM sync_log",
-    }
-
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        manifest = {
-            "export_date": datetime.now(timezone.utc).isoformat(),
-            "user_id":     user_id,
-            "app":         "Volken",
-            "row_counts":  {},
-        }
-        for name, query in tables.items():
-            rows = [dict(r) for r in conn.execute(query).fetchall()]
-            manifest["row_counts"][name] = len(rows)
-            zf.writestr(f"{name}.json", json.dumps(rows, indent=2, default=str))
-
-        zf.writestr("manifest.json", json.dumps(manifest, indent=2))
-
-    buf.seek(0)
+    buf = build_export_zip(svc._conn(), user_id)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
     filename = f"volken_export_{stamp}.zip"
     return StreamingResponse(
