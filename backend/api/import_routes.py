@@ -171,6 +171,22 @@ def healthkit_missing_streams(user_id: str = Depends(get_current_user)):
     return {"count": len(rows), "activities": [dict(r) for r in rows]}
 
 
+@router.get("/healthkit/coverage")
+def healthkit_coverage(user_id: str = Depends(get_current_user)):
+    """
+    Diagnostic: total count of Apple-Health-sourced activities on the server.
+    The iOS app compares this against its local HealthKit workout count to
+    detect gaps (e.g. an interrupted backfill) without requiring the user to
+    remember to tap "Backfill HealthKit" themselves.
+    """
+    svc = get_data_service(user_id)
+    conn = svc._conn()
+    row = conn.execute(
+        "SELECT COUNT(*) AS count FROM activities WHERE source = 'apple_health'"
+    ).fetchone()
+    return {"count": row["count"]}
+
+
 @router.post("/healthkit", response_model=HKSyncResponse)
 def healthkit_sync(
     body: HKSyncRequest,
@@ -224,7 +240,10 @@ def healthkit_sync(
             skipped += 1
             continue
 
-        activity_name = f"{w.type} – {date_str}"
+        # No date embedded — the frontend's formatActivityName() appends one
+        # consistently everywhere it's displayed; baking it in here just
+        # produces doubled dates once that formatting is applied.
+        activity_name = w.type
         start_ts = start_dt.timestamp()
 
         match = conn.execute(

@@ -91,7 +91,11 @@ export default function RouteMap({
   const primaryColor = colorMap[activityType] || '#38bdf8';
 
   return (
-    <div className="glass-card" style={{ overflow: 'hidden', borderRadius: 'var(--radius-lg)' }}>
+    // `isolation: isolate` pins Leaflet's internal z-index stack (tile/marker/
+    // popup panes run up to 700+) to a local stacking context, so it can
+    // never out-rank page chrome like the bottom nav no matter what z-index
+    // Leaflet assigns internally.
+    <div className="glass-card" style={{ overflow: 'hidden', borderRadius: 'var(--radius-lg)', position: 'relative', isolation: 'isolate' }}>
       <MapContainer
         center={center}
         zoom={14}

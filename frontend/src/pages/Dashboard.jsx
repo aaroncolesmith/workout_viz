@@ -397,10 +397,7 @@ export default function Dashboard() {
 
       {/* ── Performance Benchmarks ── */}
       <div style={{ marginBottom: 'var(--space-xl)' }}>
-        <BestSegmentsTrend 
-          type={selectedType === 'All' ? 'Run' : selectedType} 
-          date_from={dateCutoff}
-        />
+        <BestSegmentsTrend />
       </div>
 
       {/* ── Charts Grid ── */}

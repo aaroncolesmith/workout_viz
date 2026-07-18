@@ -12,16 +12,17 @@ import ActivityHeader from '../components/ActivityHeader';
 import PerformanceDelta from '../components/PerformanceDelta';
 import SplitPaceChart from '../components/SplitPaceChart';
 import SplitHRChart from '../components/SplitHRChart';
+import MileSplitsView from '../components/MileSplitsView';
 import FastestSegments from '../components/FastestSegments';
 import SimilarWorkoutsPanel from '../components/SimilarWorkoutsPanel';
 import InsightCard from '../components/InsightCard';
 import ComparisonCard from '../components/ComparisonCard';
 import SwimLapChart from '../components/SwimLapChart';
 import { useComparisonState } from '../hooks/useComparisonState';
-import { useZoomState } from '../hooks/useZoomState';
 
 const TABS = [
   { key: 'overview',  label: 'Overview'  },
+  { key: 'pace',      label: 'Pace'      },
   { key: 'splits',    label: 'Splits'    },
   { key: 'compare',   label: 'Compare'   },
   { key: 'segments',  label: 'Segments'  },
@@ -29,12 +30,14 @@ const TABS = [
 
 function TabBar({ activeTab, onSelect, visibleTabs, accentColor = '#26c6f9' }) {
   return (
-    <div style={{
-      display: 'flex',
-      gap: 2,
-      borderBottom: '1px solid #2a2a32',
-      marginBottom: 'var(--space-xl)',
-    }}>
+    <div
+      className="scroll-tabs"
+      style={{
+        gap: 2,
+        borderBottom: '1px solid #2a2a32',
+        marginBottom: 'var(--space-xl)',
+      }}
+    >
       {TABS.filter(t => visibleTabs.has(t.key)).map(tab => {
         const active = activeTab === tab.key;
         return (
@@ -49,7 +52,8 @@ function TabBar({ activeTab, onSelect, visibleTabs, accentColor = '#26c6f9' }) {
               fontFamily: 'var(--font-body)',
               fontWeight: active ? 700 : 500,
               fontSize: '0.85rem',
-              padding: '10px 20px',
+              padding: '10px 16px',
+              whiteSpace: 'nowrap',
               cursor: 'pointer',
               transition: 'color 0.15s, border-color 0.15s',
               marginBottom: -1,
@@ -76,10 +80,8 @@ export default function ActivityDetail() {
     setSearchParams(next, { replace: true });
   };
   const queryClient = useQueryClient();
-  const [comparisonSplitsMap, setComparisonSplitsMap] = useState({});
   const [xAxisType, setXAxisType] = useState('distance'); // 'distance' or 'time'
   const [syncingDetails, setSyncingDetails] = useState(false);
-  const [missingDataIds, setMissingDataIds] = useState([]);
   const [comparisonFastestMap, setComparisonFastestMap] = useState({});
   const {
     comparisonIds,
@@ -148,30 +150,13 @@ export default function ActivityDetail() {
   };
 
   useEffect(() => {
-    setComparisonSplitsMap({});
     setComparisonFastestMap({});
-
   }, [id]);
 
-  // Load comparison splits when comparisonIds changes
+  // Load comparison fastest-segments when comparisonIds changes (used by the
+  // Segments tab's comparison columns).
   useEffect(() => {
     comparisonIds.forEach(cid => {
-      if (!comparisonSplitsMap[cid]) {
-        getActivitySplits(cid)
-          .then(data => {
-            setComparisonSplitsMap(prev => ({
-              ...prev,
-              [cid]: data.splits || []
-            }));
-            if (!data.splits || data.splits.length === 0) {
-              setMissingDataIds(prev => Array.from(new Set([...prev, cid])));
-            } else {
-              setMissingDataIds(prev => prev.filter(id => id !== cid));
-            }
-          })
-          .catch(console.error);
-      }
-      // Fetch fastest segments for comparison
       if (!comparisonFastestMap[cid]) {
         getActivityFastestSegments(cid)
           .then(data => {
@@ -179,15 +164,6 @@ export default function ActivityDetail() {
           })
           .catch(console.error);
       }
-
-    });
-    // Remove old splits that are no longer selected
-    setComparisonSplitsMap(prev => {
-      const keysToRemove = Object.keys(prev).filter(key => !comparisonIds.includes(Number(key)));
-      if (keysToRemove.length === 0) return prev;
-      const next = { ...prev };
-      keysToRemove.forEach(key => delete next[key]);
-      return next;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [comparisonIds]);
@@ -226,85 +202,96 @@ export default function ActivityDetail() {
   }, [activity, comparisonActivities]);
 
   const splitChartData = useMemo(() => {
-    // Rows are aligned by DISTANCE, not array index — activities can have
-    // different split grains (legacy 0.1 mi vs newer finer splits), so the
-    // i-th split of two runs may sit at different mile marks.
+    // `total_distance_miles` is the cumulative mark at each row; grain (the
+    // width of that bucket) varies — legacy synced activities are 0.1 mi,
+    // newer ones 0.05 mi — so it's derived per-row, never assumed.
     const splitMile = (s, fallback) => Number(s?.total_distance_miles) || fallback;
-
-    // Per-comparison cursor into its own (sorted) splits.
-    const compState = Object.fromEntries(comparisonActivities.map(ca => [
-      ca.id, { splits: comparisonSplitsMap[ca.id] || [], ptr: 0, cumTime: 0 },
-    ]));
-
-    // Consume comparison splits up to `uptoMile`; returns the last one taken.
-    const advanceComp = (st, uptoMile) => {
-      let matched = null;
-      let grain = null;
-      while (st.ptr < st.splits.length) {
-        const c = st.splits[st.ptr];
-        const cMile = splitMile(c, (st.ptr + 1) * 0.1);
-        if (cMile > uptoMile) break;
-        st.cumTime += (c.time_seconds || 0);
-        const prev = st.ptr > 0 ? splitMile(st.splits[st.ptr - 1], st.ptr * 0.1) : 0;
-        grain = Math.max(cMile - prev, 0.001);
-        matched = c;
-        st.ptr += 1;
-      }
-      return { matched, grain };
-    };
 
     const data = [];
     let cumPrimary = 0;
     let prevMile = 0;
 
-    const pushRow = (mile, s, grain) => {
-      if (s) cumPrimary += (s.time_seconds || 0);
-      const row = {
+    for (const s of splits) {
+      const mile = splitMile(s, prevMile + 0.1);
+      const grain = Math.max(mile - prevMile, 0.001);
+      cumPrimary += (s.time_seconds || 0);
+      data.push({
         index: data.length,
         mile: mile.toFixed(2),
-        time: s ? cumPrimary : null,
-        time_formatted: s ? formatTime(cumPrimary) : null,
-        pace_seconds: s?.time_seconds,
-        pace_per_mile: s?.time_seconds > 0 ? (s.time_seconds / 60) / grain : null,
-        avg_hr: s?.avg_heartrate,
-        max_hr: s?.max_heartrate,
-      };
-      comparisonActivities.forEach(ca => {
-        const st = compState[ca.id];
-        const { matched, grain: cGrain } = advanceComp(st, mile + grain / 2);
-        row[`comp_${ca.id}_pace`] = matched?.time_seconds > 0 ? (matched.time_seconds / 60) / cGrain : null;
-        row[`comp_${ca.id}_hr`] = matched?.avg_heartrate ?? null;
-        row[`comp_${ca.id}_time`] = matched ? st.cumTime : null;
+        time: cumPrimary,
+        time_formatted: formatTime(cumPrimary),
+        pace_seconds: s.time_seconds,
+        pace_per_mile: s.time_seconds > 0 ? (s.time_seconds / 60) / grain : null,
+        avg_hr: s.avg_heartrate,
+        max_hr: s.max_heartrate,
       });
-      data.push(row);
-    };
-
-    for (let i = 0; i < splits.length; i++) {
-      const s = splits[i];
-      const mile = splitMile(s, prevMile + 0.1);
-      pushRow(mile, s, Math.max(mile - prevMile, 0.001));
       prevMile = mile;
     }
 
-    // Comparison activities longer than the primary: keep their tails.
-    for (;;) {
-      const pending = comparisonActivities.filter(ca => {
-        const st = compState[ca.id];
-        return st.ptr < st.splits.length;
-      });
-      if (!pending.length) break;
-      const nextMile = Math.min(...pending.map(ca => {
-        const st = compState[ca.id];
-        return splitMile(st.splits[st.ptr], prevMile + 0.1);
-      }));
-      pushRow(nextMile, null, Math.max(nextMile - prevMile, 0.001));
-      prevMile = nextMile;
-    }
+    // Centered rolling average (window of 5 buckets, ~0.25mi) — the raw
+    // per-bucket pace/HR is sawtooth-noisy (GPS jitter, stride variation,
+    // brief walk breaks); smoothing makes the actual trend legible without
+    // a handful of spikes dominating the chart's visual range.
+    const WINDOW = 5;
+    const half = Math.floor(WINDOW / 2);
+    const smoothed = (key) => (i) => {
+      const lo = Math.max(0, i - half);
+      const hi = Math.min(data.length - 1, i + half);
+      let sum = 0, n = 0;
+      for (let j = lo; j <= hi; j++) {
+        const v = data[j][key];
+        if (v != null) { sum += v; n++; }
+      }
+      return n ? sum / n : null;
+    };
+    data.forEach((row, i) => {
+      row.pace_smooth = smoothed('pace_per_mile')(i);
+      row.hr_smooth = smoothed('avg_hr')(i);
+    });
 
     return data;
-  }, [splits, comparisonSplitsMap, comparisonActivities]);
-  const paceZoom = useZoomState({ data: splitChartData, xAxisType });
-  const hrZoom = useZoomState({ data: splitChartData, xAxisType });
+  }, [splits]);
+
+  // Sequential whole-mile aggregation (mile 1, mile 2, …) for the Splits
+  // tab — distinct from splitChartData's fine-grained bucket grain above.
+  // No backend equivalent exists; built here from the same raw splits.
+  const mileSplits = useMemo(() => {
+    if (!splits.length) return [];
+    const rows = [];
+    let mileIdx = 1;
+    let timeAcc = 0;
+    let hrWeighted = 0;
+    let hrTimeAcc = 0;
+    let prevMile = 0;
+
+    for (const s of splits) {
+      const mile = Number(s.total_distance_miles) || (prevMile + 0.05);
+      const dt = s.time_seconds || 0;
+      timeAcc += dt;
+      if (s.avg_heartrate) { hrWeighted += s.avg_heartrate * dt; hrTimeAcc += dt; }
+
+      if (mile >= mileIdx) {
+        rows.push({
+          mile: mileIdx,
+          time_seconds: timeAcc,
+          avg_hr: hrTimeAcc > 0 ? hrWeighted / hrTimeAcc : null,
+          partial: false,
+        });
+        mileIdx += 1;
+        timeAcc = 0; hrWeighted = 0; hrTimeAcc = 0;
+      }
+      prevMile = mile;
+    }
+    if (timeAcc > 0) {
+      rows.push({
+        mile: Math.round(prevMile * 100) / 100,
+        time_seconds: timeAcc,
+        avg_hr: hrTimeAcc > 0 ? hrWeighted / hrTimeAcc : null,
+        partial: true,
+      });
+    }
+    return rows;
+  }, [splits]);
 
   const handleFetchDetails = async (targetId) => {
     // If targetId is an event (e.g. from onClick), use the current activity id
@@ -314,15 +301,12 @@ export default function ActivityDetail() {
       const res = await fetch(`/api/activities/${idToSync}/sync_details`, { method: 'POST' });
       const data = await res.json();
       if (data.status === 'success') {
-        // Reload splits for this specific activity
-        const spl = await getActivitySplits(idToSync);
         if (idToSync === Number(id)) {
           await queryClient.invalidateQueries({ queryKey: ['activity-detail', id] });
         } else {
-          setComparisonSplitsMap(prev => ({ ...prev, [idToSync]: spl.splits || [] }));
-          if (spl.splits?.length > 0) {
-            setMissingDataIds(prev => prev.filter(mid => mid !== idToSync));
-          }
+          // Comparison activity — refresh its fastest-segments for the Segments tab.
+          const fresh = await getActivityFastestSegments(idToSync);
+          setComparisonFastestMap(prev => ({ ...prev, [idToSync]: fresh.segments || [] }));
         }
       }
     } catch (err) {
@@ -332,14 +316,6 @@ export default function ActivityDetail() {
     }
   };
 
-  const handleFetchAllMissing = async () => {
-    const idsToSync = [...(splits.length === 0 ? [id] : []), ...missingDataIds];
-    for (const sid of idsToSync) {
-      await handleFetchDetails(Number(sid));
-    }
-  };
-
-  const chartColors = ['#fb7185', '#fb923c', '#facc15', '#4ade80', '#2dd4bf'];
 
   if (detailQuery.isLoading) {
     return (
@@ -370,7 +346,7 @@ export default function ActivityDetail() {
 
   // Determine which tabs are relevant for this activity type
   const visibleTabs = new Set(['overview', 'compare']);
-  if (!isStrength) visibleTabs.add('splits');
+  if (!isStrength) { visibleTabs.add('pace'); visibleTabs.add('splits'); }
   if (!isStrength && hasSegments) visibleTabs.add('segments');
 
   const accentColor = activity ? activityColor(activity.type) : '#26c6f9';
@@ -414,7 +390,7 @@ export default function ActivityDetail() {
                 compareId={compareSwimId}
                 onSelectCompare={setCompareSwimId}
               />
-              <div className="glass-card" style={{ height: 380, display: 'flex', flexDirection: 'column', minWidth: 0, marginTop: 'var(--space-xl)' }}>
+              <div className="glass-card" style={{ height: 380, display: 'flex', flexDirection: 'column', minWidth: 0, marginTop: 'var(--space-xl)', overflow: 'hidden' }}>
                 <div style={{ padding: '20px 20px 0 20px', fontWeight: 600, fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                   Activity Profile
                 </div>
@@ -434,7 +410,7 @@ export default function ActivityDetail() {
                   />
                 </div>
               )}
-              <div className="glass-card" style={{ height: 400, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+              <div className="glass-card" style={{ height: 400, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
                 <div style={{ padding: '20px 20px 0 20px', fontWeight: 600, fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                   Activity Profile
                 </div>
@@ -457,37 +433,23 @@ export default function ActivityDetail() {
       )}
 
       {/* ══════════════════════════════════════════════════════
-          TAB: Splits — pace + HR split charts
+          TAB: Pace — pace + HR trend charts (fine-grained buckets)
           ══════════════════════════════════════════════════════ */}
-      {activeTab === 'splits' && (
+      {activeTab === 'pace' && (
         <div className="detail-charts-grid" style={{ minWidth: 0 }}>
           <SplitPaceChart
-            activity={activity}
-            comparisonActivities={comparisonActivities}
             splitChartData={splitChartData}
-            chartColors={chartColors}
             xAxisType={xAxisType}
             handleSetXAxisType={handleSetXAxisType}
-            splits={splits}
-            missingDataIds={missingDataIds}
-            handleFetchAllMissing={handleFetchAllMissing}
             handleFetchDetails={handleFetchDetails}
             syncingDetails={syncingDetails}
-            paceZoom={paceZoom}
           />
           <SplitHRChart
-            activity={activity}
-            comparisonActivities={comparisonActivities}
             splitChartData={splitChartData}
-            chartColors={chartColors}
             xAxisType={xAxisType}
             handleSetXAxisType={handleSetXAxisType}
-            splits={splits}
-            missingDataIds={missingDataIds}
-            handleFetchAllMissing={handleFetchAllMissing}
             handleFetchDetails={handleFetchDetails}
             syncingDetails={syncingDetails}
-            hrZoom={hrZoom}
           />
           {splits.length === 0 && (
             <div style={{ gridColumn: '1 / -1', padding: 'var(--space-xl)', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
@@ -505,13 +467,25 @@ export default function ActivityDetail() {
       )}
 
       {/* ══════════════════════════════════════════════════════
+          TAB: Splits — time + heart rate per whole mile
+          ══════════════════════════════════════════════════════ */}
+      {activeTab === 'splits' && (
+        <MileSplitsView
+          mileSplits={mileSplits}
+          handleFetchDetails={handleFetchDetails}
+          syncingDetails={syncingDetails}
+          activityId={Number(id)}
+        />
+      )}
+
+      {/* ══════════════════════════════════════════════════════
           TAB: Compare — radar with overlays + delta + similar
           ══════════════════════════════════════════════════════ */}
       {activeTab === 'compare' && (
         <div>
           {/* Radar with comparison overlays */}
           <div className="activity-compare-grid">
-            <div className="glass-card" style={{ height: 400, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+            <div className="glass-card" style={{ height: 400, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
               <div style={{ padding: '20px 20px 0 20px', fontWeight: 600, fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                 Activity Profile
               </div>
@@ -523,7 +497,7 @@ export default function ActivityDetail() {
                     {comparisonActivities.length} session{comparisonActivities.length > 1 ? 's' : ''}
                   </span>
                   <button
-                    onClick={() => { clearComparisonIds(); setComparisonSplitsMap({}); }}
+                    onClick={clearComparisonIds}
                     style={{ marginLeft: 10, background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', textDecoration: 'underline' }}
                   >
                     Clear All

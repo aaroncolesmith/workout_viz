@@ -25,21 +25,23 @@ function MiniMap({ encodedPolyline, color = '#38bdf8', height = 120, mapKey }) {
   if (!positions.length) return null;
 
   return (
-    <MapContainer
-      key={mapKey}
-      bounds={positions}
-      boundsOptions={{ padding: [10, 10] }}
-      style={{ height, width: '100%', borderRadius: 6, background: '#0a0e1a' }}
-      scrollWheelZoom={false}
-      zoomControl={false}
-      dragging={false}
-      doubleClickZoom={false}
-      attributionControl={false}
-    >
-      <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
-      <Polyline positions={positions} pathOptions={{ color, weight: 3, opacity: 0.9 }} />
-      <Polyline positions={positions} pathOptions={{ color, weight: 10, opacity: 0.15 }} />
-    </MapContainer>
+    <div style={{ position: 'relative', isolation: 'isolate', overflow: 'hidden', borderRadius: 6 }}>
+      <MapContainer
+        key={mapKey}
+        bounds={positions}
+        boundsOptions={{ padding: [10, 10] }}
+        style={{ height, width: '100%', background: '#0a0e1a' }}
+        scrollWheelZoom={false}
+        zoomControl={false}
+        dragging={false}
+        doubleClickZoom={false}
+        attributionControl={false}
+      >
+        <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
+        <Polyline positions={positions} pathOptions={{ color, weight: 3, opacity: 0.9 }} />
+        <Polyline positions={positions} pathOptions={{ color, weight: 10, opacity: 0.15 }} />
+      </MapContainer>
+    </div>
   );
 }
 
@@ -476,7 +478,7 @@ export default function RoutesPage() {
 
           {/* Detail panel */}
           {selectedRouteId && (
-            <div className="glass-card" style={{ padding: 'var(--space-lg)', position: 'sticky', top: 80, maxHeight: 'calc(100vh - 120px)', overflowY: 'auto' }}>
+            <div className="glass-card" style={{ padding: 'var(--space-lg)', position: 'sticky', top: 80, maxHeight: 'calc(100vh - 120px)', overflowY: 'auto', overflowX: 'hidden' }}>
               <RouteDetail
                 routeId={selectedRouteId}
                 color={color}

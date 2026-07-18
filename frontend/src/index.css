@@ -97,32 +97,38 @@
   padding: 0;
 }
 
+/* App-shell layout: the document itself never scrolls (fixed to the
+   viewport height) — only `.page-container` below does. This is the
+   standard mobile app-shell pattern and it's load-bearing, not cosmetic:
+   a body-level scroll with a `position: fixed` nav on top is fragile
+   inside WKWebView — fixed elements can visually detach from the viewport
+   edge during elastic bounce-scroll, and can render underneath
+   GPU-compositing layers (e.g. Leaflet's per-tile transforms). Pinning the
+   shell height and scrolling only the inner content sidesteps both bug
+   classes structurally instead of chasing them with more CSS. */
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+}
+
 html {
   font-size: 16px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  overflow-x: hidden;
-  overscroll-behavior-y: none;
 }
 
 body {
   font-family: var(--font-body);
   background: var(--bg-primary);
   color: var(--text-primary);
-  min-height: 100vh;
   line-height: 1.6;
-  overflow-x: hidden;
-  max-width: 100vw;
-  overscroll-behavior-y: none;
+  overscroll-behavior: none;
 }
 
 #root {
-  min-height: 100vh;
   display: flex;
   flex-direction: column;
   width: 100%;
-  max-width: 100vw;
-  overflow-x: hidden;
 }
 
 a {
@@ -154,15 +160,19 @@ a:hover {
 .app-layout {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  height: 100%;
+  overflow: hidden;
 }
 
 /* ── Bottom Navigation ─────────────────────────── */
+/* A normal flex sibling of `.page-container`, NOT `position: fixed` — see
+   the app-shell comment above `html, body, #root`. Living outside the
+   scrollable region means it can't detach during bounce-scroll and can't
+   lose a paint-order fight with transformed content inside the scroll
+   area; it simply always occupies its own row at the bottom of the shell. */
 .bottom-nav {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
+  position: relative;
+  flex-shrink: 0;
   height: 72px;
   background: rgba(13, 13, 15, 0.94);
   backdrop-filter: blur(20px);
@@ -259,10 +269,26 @@ a:hover {
   flex-shrink: 0;
 }
 
+/* The one scrollable region in the app shell — see the app-shell comment
+   near `html, body, #root`. No bottom-nav-height compensation padding
+   needed here anymore: the nav is a real flex sibling that claims its own
+   space rather than an overlay this content has to leave room for. */
 .page-container {
   flex: 1;
+  min-width: 0; /* let flex children shrink instead of pushing width */
+  min-height: 0; /* let flexbox actually constrain height so overflow-y works */
+  overflow-y: auto;
+  /* Explicit, not left to default: setting only overflow-y forces the UA to
+     also make overflow-x "auto" per spec (a browser can't leave one axis
+     `visible` while the other scrolls) — any child rendered wider than the
+     viewport (a chart, a table) would silently get its own horizontal pan
+     with blank canvas beyond it. Pin it shut instead; wide content should
+     scroll internally (e.g. `overflow-x: auto` on that one component), not
+     drag the whole page sideways. */
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
   padding: var(--space-xl);
-  padding-bottom: calc(var(--space-xl) + 80px);
   max-width: 1400px;
   margin: 0 auto;
   width: 100%;
@@ -420,6 +446,23 @@ a:hover {
   gap: var(--space-sm);
   flex-wrap: wrap;
   margin-bottom: var(--space-lg);
+}
+
+/* Self-contained horizontal scroll for a row of controls that don't fit a
+   narrow screen (tab bars, chip rows) — the standard native pattern for tab
+   overflow. Scrolls only itself, never the page; scrollbar hidden since a
+   thin drag-indicator is enough affordance on touch. */
+.scroll-tabs {
+  display: flex;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.scroll-tabs::-webkit-scrollbar {
+  display: none;
+}
+.scroll-tabs > * {
+  flex-shrink: 0;
 }
 
 .filter-chip {
@@ -770,7 +813,6 @@ a:hover {
 @media (max-width: 768px) {
   .page-container {
     padding: var(--space-md);
-    padding-bottom: calc(var(--space-md) + 80px);
     max-width: 100vw;
   }
   .stats-grid {

@@ -6,35 +6,127 @@ import {
 } from 'recharts';
 import { useQuery } from '@tanstack/react-query';
 import { getBestSegmentsTrend } from '../utils/api';
-import { formatPace, formatTime, formatDate, formatActivityName, formatShortDate } from '../utils/format';
+import { formatTime, formatDate, formatShortDate } from '../utils/format';
 import SafeResponsiveContainer from './SafeResponsiveContainer';
 import { useChartZoom } from '../hooks/useChartZoom';
 
-const SEGMENTS = [
-  { label: '1mi', distance: 1.0 },
-  { label: '2mi', distance: 2.0 },
-  { label: '5k', distance: 3.107 },
-  { label: '5mi', distance: 5.0 },
-  { label: '10k', distance: 6.214 },
-  { label: '10mi', distance: 10.0 },
-  { label: 'Half', distance: 13.1 },
-  { label: 'Full', distance: 26.2 },
+// Per-sport distance sets — mirrors Dashboard.jsx's PR_SPORT_GROUPS so the
+// same distances/labels appear in both the "Personal Records" grid and here.
+const SPORT_SEGMENTS = {
+  Run: [
+    { label: '1mi', distance: 1.0 },
+    { label: '2mi', distance: 2.0 },
+    { label: '5k', distance: 3.107 },
+    { label: '5mi', distance: 5.0 },
+    { label: '10k', distance: 6.214 },
+    { label: '10mi', distance: 10.0 },
+    { label: 'Half', distance: 13.1 },
+    { label: 'Full', distance: 26.2 },
+  ],
+  Ride: [
+    { label: '5mi', distance: 5.0 },
+    { label: '10mi', distance: 10.0 },
+    { label: '25mi', distance: 25.0 },
+    { label: '50mi', distance: 50.0 },
+  ],
+  Swim: [
+    { label: '1/4mi', distance: 0.25 },
+    { label: '1/2mi', distance: 0.5 },
+    { label: '1mi', distance: 1.0 },
+  ],
+};
+
+const RANGES = [
+  { label: '30D', days: 30 },
+  { label: '90D', days: 90 },
+  { label: '1Y',  days: 365 },
+  { label: 'All', days: 3650 },
 ];
 
-export default function BestSegmentsTrend({ type: typeProp, date_from }) {
-  const navigate = useNavigate();
-  const [selectedSegment, setSelectedSegment] = useState(SEGMENTS[0]);
-  const [internalSelectedType, setInternalSelectedType] = useState('Run');
+const CHART_COLOR = '#10b981'; // Emerald/Green for best results
+const HIGHLIGHT_COLOR = '#fbbf24'; // Amber for top 3
 
-  // React to prop changes
-  const selectedType = typeProp || internalSelectedType;
+// Hoisted to module scope (not defined inside BestSegmentsTrend) per React's
+// own lint rule: a component declared during render gets a new identity
+// every render, which Recharts' <Tooltip content={<X />}> pattern handles by
+// cloning the element and merging in `active`/`payload` — so `top3Ids` and
+// `navigate` are passed through as ordinary props instead of closures.
+function TooltipContent({ active, payload, top3Ids, navigate }) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0]?.payload;
+  const isTop3 = top3Ids.has(d.activity_id);
+  return (
+    <div
+      className="custom-tooltip"
+      style={{
+        background: 'rgba(19,19,19,0.95)',
+        border: `1px solid ${isTop3 ? HIGHLIGHT_COLOR : 'rgba(255,255,255,0.15)'}`,
+        borderRadius: 12,
+        padding: '12px',
+        fontSize: 12,
+        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.4)',
+        pointerEvents: 'auto', // Keep the content interactive
+        minWidth: 180,
+        zIndex: 1000
+      }}
+      onClick={(e) => {
+        e.stopPropagation();
+        navigate(`/activity/${d.activity_id}`);
+      }}
+    >
+      <div style={{ fontWeight: 600, marginBottom: 4, color: '#f8fafc', display: 'flex', alignItems: 'center', gap: 8 }}>
+        {isTop3 && <span style={{ color: HIGHLIGHT_COLOR }}>★</span>}
+        {d.activity_name}
+      </div>
+      <div style={{ color: '#94a3b8', marginBottom: 8 }}>{formatDate(d.date)}</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'auto auto', gap: '4px 12px', marginBottom: 10 }}>
+        <span style={{ color: '#94a3b8' }}>Time:</span>
+        <span style={{ color: isTop3 ? HIGHLIGHT_COLOR : CHART_COLOR, fontWeight: 700, fontFamily: 'Manrope' }}>{d.time_str}</span>
+        <span style={{ color: '#94a3b8' }}>Pace:</span>
+        <span style={{ color: '#38bdf8', fontWeight: 700, fontFamily: 'Manrope' }}>{d.pace_str}</span>
+      </div>
+      <div style={{
+        textAlign: 'center',
+        padding: '4px',
+        background: 'rgba(255,255,255,0.05)',
+        borderRadius: 4,
+        fontSize: '0.65rem',
+        color: '#38bdf8',
+        cursor: 'pointer',
+        fontWeight: 600
+      }}>
+        Click point or here to view activity →
+      </div>
+    </div>
+  );
+}
+
+export default function BestSegmentsTrend() {
+  const navigate = useNavigate();
+  const [selectedType, setSelectedType] = useState('Run');
+  const [selectedSegment, setSelectedSegment] = useState(SPORT_SEGMENTS.Run[0]);
+  const [days, setDays] = useState(365);
+
+  const segments = SPORT_SEGMENTS[selectedType];
+
+  const handleSelectType = (type) => {
+    setSelectedType(type);
+    setSelectedSegment(SPORT_SEGMENTS[type][0]);
+  };
+
+  const dateFrom = useMemo(() => {
+    if (days >= 3650) return null;
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - days);
+    return cutoff.toISOString().slice(0, 10);
+  }, [days]);
 
   const { data: trendData, isLoading } = useQuery({
-    queryKey: ['best-segments', selectedType, selectedSegment.distance, date_from],
-    queryFn: () => getBestSegmentsTrend({ 
-      type: selectedType, 
+    queryKey: ['best-segments', selectedType, selectedSegment.distance, dateFrom],
+    queryFn: () => getBestSegmentsTrend({
+      type: selectedType,
       distance: selectedSegment.distance,
-      date_from 
+      date_from: dateFrom,
     }),
   });
 
@@ -76,59 +168,6 @@ export default function BestSegmentsTrend({ type: typeProp, date_from }) {
     return [0, 1, 2, 3, 4].map(i => lo + Math.round(i * (hi - lo) / 4));
   }, [rawData, zoom.xDomain]);
 
-  const chartColor = '#10b981'; // Emerald/Green for best results
-  const highlightColor = '#fbbf24'; // Amber for top 3
-
-  const TooltipContent = ({ active, payload, label }) => {
-    if (!active || !payload?.length) return null;
-    const d = payload[0]?.payload;
-    const isTop3 = top3Ids.has(d.activity_id);
-    return (
-      <div
-        className="custom-tooltip"
-        style={{
-          background: 'rgba(19,19,19,0.95)',
-          border: `1px solid ${isTop3 ? highlightColor : 'rgba(255,255,255,0.15)'}`,
-          borderRadius: 12, 
-          padding: '12px', 
-          fontSize: 12,
-          boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.4)',
-          pointerEvents: 'auto', // Keep the content interactive
-          minWidth: 180,
-          zIndex: 1000
-        }}
-        onClick={(e) => {
-          e.stopPropagation();
-          navigate(`/activity/${d.activity_id}`);
-        }}
-      >
-        <div style={{ fontWeight: 600, marginBottom: 4, color: '#f8fafc', display: 'flex', alignItems: 'center', gap: 8 }}>
-          {isTop3 && <span style={{ color: highlightColor }}>★</span>}
-          {d.activity_name}
-        </div>
-        <div style={{ color: '#94a3b8', marginBottom: 8 }}>{formatDate(d.date)}</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'auto auto', gap: '4px 12px', marginBottom: 10 }}>
-          <span style={{ color: '#94a3b8' }}>Time:</span>
-          <span style={{ color: isTop3 ? highlightColor : chartColor, fontWeight: 700, fontFamily: 'Manrope' }}>{d.time_str}</span>
-          <span style={{ color: '#94a3b8' }}>Pace:</span>
-          <span style={{ color: '#38bdf8', fontWeight: 700, fontFamily: 'Manrope' }}>{d.pace_str}</span>
-        </div>
-        <div style={{ 
-          textAlign: 'center', 
-          padding: '4px', 
-          background: 'rgba(255,255,255,0.05)', 
-          borderRadius: 4, 
-          fontSize: '0.65rem',
-          color: '#38bdf8',
-          cursor: 'pointer',
-          fontWeight: 600
-        }}>
-          Click point or here to view activity →
-        </div>
-      </div>
-    );
-  };
-
   return (
     <div className="glass-card chart-container" style={{ minWidth: 0, minHeight: 450 }}>
       <div className="section-header chart-header-stack" style={{ marginBottom: 15 }}>
@@ -138,27 +177,25 @@ export default function BestSegmentsTrend({ type: typeProp, date_from }) {
         </div>
 
         <div className="chart-header-controls" style={{ flexWrap: 'wrap' }}>
-             {!typeProp && (
-               <select 
-                  value={selectedType}
-                  onChange={(e) => setInternalSelectedType(e.target.value)}
-                  style={{
-                    background: 'rgba(255,255,255,0.05)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: 6,
-                    color: 'var(--text-main)',
-                    fontSize: '0.75rem',
-                    padding: '2px 8px',
-                    outline: 'none'
-                  }}
-                >
-                  <option value="Run">Run</option>
-                  <option value="Ride">Ride</option>
-                  <option value="Hike">Hike</option>
-                </select>
-             )}
-          <div className="filter-bar" style={{ margin: 0 }}>
-            {SEGMENTS.map(seg => (
+          <select
+            value={selectedType}
+            onChange={(e) => handleSelectType(e.target.value)}
+            style={{
+              background: 'rgba(255,255,255,0.05)',
+              border: '1px solid rgba(255,255,255,0.1)',
+              borderRadius: 6,
+              color: 'var(--text-main)',
+              fontSize: '0.75rem',
+              padding: '2px 8px',
+              outline: 'none'
+            }}
+          >
+            <option value="Run">Run</option>
+            <option value="Ride">Ride</option>
+            <option value="Swim">Swim</option>
+          </select>
+          <div className="filter-bar scroll-tabs" style={{ margin: 0, flexWrap: 'nowrap' }}>
+            {segments.map(seg => (
               <button
                 key={seg.label}
                 className={`filter-chip ${selectedSegment.label === seg.label ? 'active' : ''}`}
@@ -166,6 +203,18 @@ export default function BestSegmentsTrend({ type: typeProp, date_from }) {
                 style={{ fontSize: '0.65rem', padding: '2px 8px' }}
               >
                 {seg.label}
+              </button>
+            ))}
+          </div>
+          <div className="filter-bar" style={{ margin: 0 }}>
+            {RANGES.map(r => (
+              <button
+                key={r.label}
+                className={`filter-chip ${days === r.days ? 'active' : ''}`}
+                onClick={() => setDays(r.days)}
+                style={{ fontSize: '0.65rem', padding: '2px 8px' }}
+              >
+                {r.label}
               </button>
             ))}
           </div>
@@ -178,7 +227,7 @@ export default function BestSegmentsTrend({ type: typeProp, date_from }) {
           <div style={{ position: 'relative', minWidth: 0, zIndex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginBottom: 8, minHeight: 22 }}>
               {zoom.isZoomed ? (
-                <button 
+                <button
                   className="filter-chip"
                   onClick={zoom.reset}
                   style={{ fontSize: '0.6rem', padding: '2px 10px', background: 'rgba(56, 189, 248, 0.2)', color: '#38bdf8', borderColor: 'rgba(56, 189, 248, 0.4)' }}
@@ -210,7 +259,7 @@ export default function BestSegmentsTrend({ type: typeProp, date_from }) {
                   domain={zoom.xDomain || ['auto', 'auto']}
                   allowDataOverflow={zoom.isZoomed}
                 />
-                <YAxis 
+                <YAxis
                   dataKey="time_seconds"
                   tick={{ fontSize: 10, fill: '#64748b' }}
                   tickFormatter={v => formatTime(v)}
@@ -218,19 +267,19 @@ export default function BestSegmentsTrend({ type: typeProp, date_from }) {
                   allowDataOverflow={zoom.isZoomed}
                   reversed
                 />
-                <Tooltip 
-                  content={<TooltipContent />} 
-                  wrapperStyle={{ pointerEvents: 'none', zIndex: 1000 }} 
+                <Tooltip
+                  content={<TooltipContent top3Ids={top3Ids} navigate={navigate} />}
+                  wrapperStyle={{ pointerEvents: 'none', zIndex: 1000 }}
                 />
-                <Scatter 
-                  data={rawData} 
-                  fill={chartColor}
+                <Scatter
+                  data={rawData}
+                  fill={CHART_COLOR}
                   onClick={(d) => navigate(`/activity/${d.activity_id}`)}
                 >
                   {rawData.map((d, i) => (
-                    <Cell 
-                      key={i} 
-                      fill={top3Ids.has(d.activity_id) ? highlightColor : chartColor}
+                    <Cell
+                      key={i}
+                      fill={top3Ids.has(d.activity_id) ? HIGHLIGHT_COLOR : CHART_COLOR}
                       fillOpacity={top3Ids.has(d.activity_id) ? 1 : 0.6}
                       stroke={top3Ids.has(d.activity_id) ? '#fff' : 'none'}
                       strokeWidth={1}
@@ -254,29 +303,29 @@ export default function BestSegmentsTrend({ type: typeProp, date_from }) {
             <SafeResponsiveContainer height={280}>
               <BarChart data={top10} layout="vertical" margin={{ left: 0, right: 10 }}>
                 <XAxis type="number" hide domain={[0, 'dataMax']} />
-                <YAxis 
-                  dataKey="label" 
-                  type="category" 
-                  tick={{ fontSize: 9, fill: '#64748b' }} 
+                <YAxis
+                  dataKey="label"
+                  type="category"
+                  tick={{ fontSize: 9, fill: '#64748b' }}
                   width={45}
                   axisLine={false}
                   tickLine={false}
                 />
-                <Tooltip 
+                <Tooltip
                   cursor={{ fill: 'rgba(255,255,255,0.05)' }}
-                  content={<TooltipContent />}
+                  content={<TooltipContent top3Ids={top3Ids} navigate={navigate} />}
                   wrapperStyle={{ pointerEvents: 'none', zIndex: 1000 }}
                 />
-                <Bar 
-                  dataKey="time_seconds" 
+                <Bar
+                  dataKey="time_seconds"
                   radius={[0, 4, 4, 0]}
                   onClick={(d) => navigate(`/activity/${d.activity_id}`)}
                   barSize={18}
                 >
                   {top10.map((d, i) => (
-                    <Cell 
-                      key={i} 
-                      fill={d.rank <= 3 ? highlightColor : chartColor} 
+                    <Cell
+                      key={i}
+                      fill={d.rank <= 3 ? HIGHLIGHT_COLOR : CHART_COLOR}
                       fillOpacity={0.9 - (i * 0.06)}
                       style={{ cursor: 'pointer' }}
                     />

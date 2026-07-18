@@ -1,146 +1,116 @@
-import React from 'react';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceArea, Line } from 'recharts';
+import React, { useMemo } from 'react';
+import { ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 import SafeResponsiveContainer from './SafeResponsiveContainer';
-import { formatTime, formatHR, formatActivityName } from '../utils/format';
+import { formatTime, formatHR } from '../utils/format';
+
+const ACCENT = '#f472b6';
 
 export default function SplitHRChart({
-  activity,
-  comparisonActivities,
   splitChartData,
-  chartColors,
   xAxisType,
   handleSetXAxisType,
   handleFetchDetails,
   syncingDetails,
-  hrZoom,
 }) {
+  const yDomain = useMemo(() => {
+    const vals = splitChartData.map(d => d.hr_smooth).filter(v => v != null);
+    if (!vals.length) return ['auto', 'auto'];
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    const pad = (max - min || 1) * 0.15;
+    return [Math.max(0, min - pad), max + pad];
+  }, [splitChartData]);
+
   return (
-    <div className="glass-card chart-container" style={{ minWidth: 0, minHeight: 350 }}>
-      <div className="section-header" style={{ marginBottom: 20 }}>
+    <div className="glass-card chart-container" style={{ minWidth: 0, minHeight: 350, padding: 'var(--space-lg)' }}>
+      <div className="section-header" style={{ marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
         <div>
-          <span className="section-title">Heart Rate Detail</span>
-          <span className="section-subtitle">per split</span>
+          <span className="section-title">Heart Rate</span>
+          <span className="section-subtitle">smoothed trend, per split</span>
         </div>
-        <div className="filter-bar" style={{ margin: 0 }}>
-          <button 
-            className={`filter-chip ${xAxisType === 'distance' ? 'active' : ''}`}
-            onClick={() => handleSetXAxisType('distance')}
-            style={{ fontSize: '0.65rem', padding: '2px 10px' }}
-          >
-            Distance
-          </button>
-          <button 
-            className={`filter-chip ${xAxisType === 'time' ? 'active' : ''}`}
-            onClick={() => handleSetXAxisType('time')}
-            style={{ fontSize: '0.65rem', padding: '2px 10px' }}
-          >
-            Time
-          </button>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {[{ key: 'distance', label: 'Distance' }, { key: 'time', label: 'Time' }].map(o => {
+            const active = xAxisType === o.key;
+            return (
+              <button
+                key={o.key}
+                onClick={() => handleSetXAxisType(o.key)}
+                style={{
+                  padding: '3px 10px', borderRadius: 20, fontSize: '12px',
+                  fontWeight: active ? 700 : 500, cursor: 'pointer',
+                  border: `1px solid ${active ? ACCENT : '#2a2a32'}`,
+                  background: active ? ACCENT : 'transparent',
+                  color: active ? '#000' : 'var(--text-secondary)',
+                  fontFamily: 'var(--font-body)', transition: 'all 0.15s',
+                }}
+              >
+                {o.label}
+              </button>
+            );
+          })}
         </div>
       </div>
 
       {splitChartData.length > 0 ? (
-        <div style={{ position: 'relative' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginBottom: 4, minHeight: 22 }}>
-            {hrZoom.isZoomed ? (
-              <button 
-                className="filter-chip"
-                onClick={hrZoom.reset}
-                style={{ fontSize: '0.6rem', padding: '2px 10px', background: 'rgba(244, 114, 182, 0.2)', color: '#f472b6', borderColor: 'rgba(244, 114, 182, 0.4)' }}
-              >
-                ↺ Reset Zoom
-              </button>
-            ) : (
-              <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)', opacity: 0.5, fontStyle: 'italic' }}>drag to zoom</span>
-            )}
+        <>
+          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: '0.62rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+              <span style={{ width: 8, height: 8, borderRadius: '50%', background: ACCENT, opacity: 0.4 }} />
+              per-split
+            </span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+              <span style={{ width: 14, height: 2, background: ACCENT, borderRadius: 1 }} />
+              trend
+            </span>
           </div>
           <SafeResponsiveContainer height={250}>
-            <AreaChart 
-              data={hrZoom.filteredData.length ? hrZoom.filteredData : splitChartData}
-              style={{ cursor: hrZoom.drag ? 'col-resize' : 'crosshair' }}
-              onMouseDown={hrZoom.onMouseDown}
-              onMouseMove={hrZoom.onMouseMove}
-              onMouseUp={hrZoom.onMouseUp}
-              onMouseLeave={hrZoom.onMouseLeave}
-            >
-              <defs>
-                <linearGradient id="hrGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#38bdf8" stopOpacity={0.25} />
-                  <stop offset="100%" stopColor="#38bdf8" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-
+            <ComposedChart data={splitChartData} margin={{ top: 5, right: 8, bottom: 0, left: -14 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-              <XAxis 
-                dataKey={xAxisType === 'distance' ? 'mile' : 'time'} 
+              <XAxis
+                dataKey={xAxisType === 'distance' ? 'mile' : 'time'}
                 type={xAxisType === 'distance' ? 'category' : 'number'}
                 tick={{ fontSize: 10 }}
                 tickFormatter={v => xAxisType === 'distance' ? `${v}mi` : formatTime(v)}
+                minTickGap={28}
               />
-              <YAxis tick={{ fontSize: 10 }} domain={['auto', 'auto']} />
+              <YAxis domain={yDomain} tick={{ fontSize: 10 }} width={40} />
               <Tooltip
                 content={({ active, payload }) => {
                   if (!active || !payload?.length) return null;
                   const d = payload[0]?.payload;
+                  if (!d) return null;
                   return (
-                    <div style={{ background: 'rgba(19,19,19,0.95)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
+                    <div style={{ background: '#0d0d0f', border: '1px solid #2a2a32', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
                       <div style={{ fontWeight: 600, marginBottom: 4 }}>
-                        {xAxisType === 'distance' ? `Distance: ${d.mile} mi` : `Time: ${formatTime(d.time)}`}
+                        {xAxisType === 'distance' ? `Mile ${d.mile}` : formatTime(d.time)}
                       </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 20, color: '#38bdf8', marginBottom: 2 }}>
-                        <span>{formatActivityName(activity)}:</span>
-                        <span>{formatHR(d.avg_hr)} bpm</span>
-                      </div>
-                      {comparisonActivities.map((ca, idx) => (
-                        <div key={ca.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 20, color: chartColors[idx % chartColors.length] }}>
-                          <span>{formatActivityName(ca)}:</span>
-                          <span>{d[`comp_${ca.id}_hr`] ? formatHR(d[`comp_${ca.id}_hr`]) : '—'} bpm</span>
+                      {d.avg_hr != null && (
+                        <div style={{ color: ACCENT, fontFamily: 'var(--font-display)' }}>
+                          {formatHR(d.avg_hr)} bpm
                         </div>
-                      ))}
+                      )}
+                      {d.hr_smooth != null && (
+                        <div style={{ color: ACCENT, opacity: 0.7, marginTop: 2 }}>
+                          trend: {formatHR(d.hr_smooth)} bpm
+                        </div>
+                      )}
                     </div>
                   );
                 }}
               />
-              <Area
-                name={formatActivityName(activity)}
-                type="monotone"
-                dataKey="avg_hr"
-                stroke="#38bdf8"
-                fill="url(#hrGrad)"
-                strokeWidth={2}
-                dot={false}
-                activeDot={{ r: 4, fill: '#38bdf8' }}
-                connectNulls
-              />
-
-              {comparisonActivities.map((ca, idx) => (
-                <Line
-                  key={ca.id}
-                  name={formatActivityName(ca)}
-                  type="monotone"
-                  dataKey={`comp_${ca.id}_hr`}
-                  stroke={chartColors[idx % chartColors.length]}
-                  strokeWidth={2}
-                  dot={false}
-                  connectNulls
-                />
-              ))}
-              <Legend verticalAlign="top" height={36} wrapperStyle={{ fontSize: 10, color: 'var(--text-muted)' }} />
-              {hrZoom.referenceAreaProps && (
-                <ReferenceArea 
-                  x1={hrZoom.referenceAreaProps.x1}
-                  x2={hrZoom.referenceAreaProps.x2}
-                  fill="rgba(244, 114, 182, 0.2)"
-                />
-              )}
-            </AreaChart>
+              <Line type="monotone" dataKey="avg_hr" stroke="none" isAnimationActive={false}
+                    dot={{ r: 2, fill: ACCENT, fillOpacity: 0.4, strokeWidth: 0 }} activeDot={false} />
+              <Line type="monotone" dataKey="hr_smooth" stroke={ACCENT} strokeWidth={2.5}
+                    dot={false} isAnimationActive={false}
+                    activeDot={{ r: 5, fill: ACCENT, stroke: '#0d0d0f', strokeWidth: 2 }} />
+            </ComposedChart>
           </SafeResponsiveContainer>
-        </div>
+        </>
       ) : (
         <div style={{ height: 250, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 15, border: '1px dashed var(--border-medium)', borderRadius: 12 }}>
           <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Granular split data not yet synced for this activity</span>
-          <button 
-            className="filter-chip" 
+          <button
+            className="filter-chip"
             onClick={handleFetchDetails}
             disabled={syncingDetails}
             style={{ fontSize: '0.7rem' }}

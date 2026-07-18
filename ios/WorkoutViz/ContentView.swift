@@ -175,6 +175,21 @@ struct ContentView: View {
                 .background(.thinMaterial, in: Capsule())
                 .padding(.top, 8)
                 .allowsHitTesting(false)
+            } else if syncEngine.gapDetected {
+                Button {
+                    Task { await syncEngine.performFullBackfill() }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                        Text("Some workouts may be missing — Sync now")
+                    }
+                    .font(.caption2.weight(.semibold))
+                    .foregroundColor(.white)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Color.orange.opacity(0.9), in: Capsule())
+                .padding(.top, 8)
             }
 
         }

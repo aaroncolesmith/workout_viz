@@ -507,9 +507,9 @@ def get_best_segments_trend(
         date_from=date_from, date_to=date_to,
     )
     label_map = {
-        1.0: "1 Mile", 2.0: "2 Miles", 3.107: "5K",
-        5.0: "5 Miles", 6.214: "10K",
-        13.1: "Half Marathon", 26.2: "Marathon",
+        0.25: "1/4 Mile", 0.5: "1/2 Mile", 1.0: "1 Mile", 2.0: "2 Miles",
+        3.107: "5K", 5.0: "5 Miles", 6.214: "10K", 10.0: "10 Miles",
+        13.1: "Half Marathon", 25.0: "25 Miles", 26.2: "Marathon", 50.0: "50 Miles",
     }
     return {
         "data": best_efforts,

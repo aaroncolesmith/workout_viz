@@ -86,6 +86,19 @@ export default function MetricTile({ data, selected, onClick }) {
             ⚠ unusual
           </span>
         )}
+        <span
+          aria-hidden="true"
+          style={{
+            marginLeft: data.out_of_band ? 4 : 'auto',
+            flexShrink: 0,
+            fontSize: '0.6rem',
+            color: 'var(--text-muted)',
+            transform: selected ? 'rotate(180deg)' : 'none',
+            transition: 'transform 0.15s ease',
+          }}
+        >
+          ▾
+        </span>
       </div>
 
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, justifyContent: 'space-between' }}>

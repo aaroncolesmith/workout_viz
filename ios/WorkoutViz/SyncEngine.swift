@@ -19,6 +19,7 @@ final class SyncEngine: ObservableObject {
     @Published var isSyncing = false
     @Published var syncProgress: String = ""
     @Published var showingAccount = false
+    @Published var gapDetected = false
     @Published var lastSyncDate: Date? = {
         UserDefaults.standard.object(forKey: "lastSyncDate") as? Date
     }()
@@ -33,6 +34,13 @@ final class SyncEngine: ObservableObject {
     }()
 
     private let chunkSize = 25
+
+    /// How far back a full backfill reaches, and thus the only window gap
+    /// detection may fairly compare against — HealthKit history older than
+    /// this is out of scope for the app and must never count as "missing".
+    private var backfillCutoff: Date {
+        Calendar.current.date(byAdding: .year, value: -2, to: Date())!
+    }
 
     // MARK: - Public
 
@@ -57,11 +65,13 @@ final class SyncEngine: ObservableObject {
     func syncIfNeeded() async {
         if let last = lastSyncDate, Date().timeIntervalSince(last) < 1800 { return }
         await performSync()
+        await checkForGap()
     }
 
     /// Full historical backfill — resets anchor, goes back 2 years, re-uploads
     /// everything the backend says is missing splits.
     func performFullBackfill() async {
+        gapDetected = false
         try? await hk.requestAuthorization()
         print("[SyncEngine] route auth = \(hk.routeAuthStatus.rawValue)")
 
@@ -71,8 +81,30 @@ final class SyncEngine: ObservableObject {
         let forceRetryKeys = await fetchMissingStreamKeys()
         print("[SyncEngine] backend reports \(forceRetryKeys.count) workouts missing splits")
 
-        let since = Calendar.current.date(byAdding: .year, value: -2, to: Date())!
-        await performSync(force: true, since: since, forceRetryKeys: forceRetryKeys)
+        await performSync(force: true, since: backfillCutoff, forceRetryKeys: forceRetryKeys)
+        await checkForGap()
+    }
+
+    /// Compares the local HealthKit workout count against what the backend
+    /// has synced, both bounded to `backfillCutoff` — comparing unbounded
+    /// HealthKit history against a sync that only ever reaches 2 years back
+    /// would flag a "gap" no backfill could ever close. A shortfall within
+    /// that window (most commonly from an interrupted backfill — the anchor
+    /// only advances on full success) means workouts exist on the phone that
+    /// never reached the server. Surfaces a one-tap prompt instead of
+    /// requiring the user to remember Settings → Backfill HealthKit.
+    private func checkForGap() async {
+        guard let hkCount = try? await hk.countWorkouts(since: backfillCutoff) else { return }
+        guard let url = URL(string: "\(Config.backendURL)/api/import/healthkit/coverage") else { return }
+        let req = AuthService.shared.authorizedRequest(url: url, timeout: 20)
+        do {
+            let (data, _) = try await URLSession.shared.data(for: req)
+            struct Resp: Decodable { let count: Int }
+            let backendCount = try JSONDecoder().decode(Resp.self, from: data).count
+            gapDetected = hkCount > backendCount
+        } catch {
+            print("[SyncEngine] coverage check failed: \(error)")
+        }
     }
 
     /// Reset backfill progress so next backfill re-uploads everything.
@@ -425,7 +457,8 @@ private struct HKWorkoutRequest: Codable {
             end_date:           iso.string(from: workout.endDate),
             duration_sec:       workout.duration,
             distance_meters:    workout.totalDistance?.doubleValue(for: .meter()),
-            active_energy_kcal: workout.totalEnergyBurned?.doubleValue(for: .kilocalorie()),
+            active_energy_kcal: workout.statistics(for: HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned)!)?
+                .sumQuantity()?.doubleValue(for: .kilocalorie()),
             avg_heartrate:      avgHR,
             max_heartrate:      maxHR,
             streams:            nil

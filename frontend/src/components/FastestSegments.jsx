@@ -1,5 +1,5 @@
 import React from 'react';
-import { formatRelativeTo, formatDate } from '../utils/format';
+import { formatRelativeTo, formatDate, formatActivityName } from '../utils/format';
 
 const CHART_COLORS = ['#fb7185', '#fb923c', '#facc15', '#4ade80', '#2dd4bf'];
 
@@ -76,7 +76,7 @@ export default function FastestSegments({ activity, segments, comparisonActiviti
               <th style={thStyle('right')}>Segment</th>
               {hasComparisons && comparisonActivities.map((ca, ci) => (
                 <th key={ca.id} style={thStyle('right', CHART_COLORS[ci])}>
-                  <div>{ca.name || formatDate(ca.date)}</div>
+                  <div>{formatActivityName(ca)}</div>
                   <div style={{ fontSize: '0.65rem', fontWeight: 400, color: 'var(--text-muted)', marginTop: 2 }}>
                     {formatRelativeTo(ca.date, activity.date)}
                     {' · '}{formatDate(ca.date)}

@@ -6,10 +6,10 @@
  * 7d/30d rolling means, and the "normal range" baseline band, with a
  * plain-language interpretation line.
  */
-import { useState, useMemo } from 'react';
+import { Fragment, useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
-  ComposedChart, Line, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceArea,
+  ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceArea,
 } from 'recharts';
 import { getHealthSummary, getHealthMetric } from '../utils/api';
 import { formatShortDate, formatDate } from '../utils/format';
@@ -101,6 +101,20 @@ function MetricDetail({ metric }) {
   const points = useMemo(() => data?.points || [], [data]);
   const band = data?.comparison?.baseline_band || null;
 
+  // Recharts has no prop to dismiss an active tooltip on its own — on touch
+  // devices a tap pins it open with nothing to "mouse out" of. Remounting
+  // the chart (via key) resets its internal hover state; animations are
+  // already off so the remount is invisible except for the tooltip closing.
+  const [chartKey, setChartKey] = useState(0);
+  const fadeTimer = useRef(null);
+  const resetFadeTimer = useCallback(() => {
+    if (fadeTimer.current) clearTimeout(fadeTimer.current);
+    fadeTimer.current = setTimeout(() => setChartKey(k => k + 1), 3000);
+  }, []);
+  useEffect(() => () => {
+    if (fadeTimer.current) clearTimeout(fadeTimer.current);
+  }, []);
+
   const yDomain = useMemo(() => {
     const vals = points.map(p => p.value).filter(v => v != null);
     if (band) vals.push(band.lower, band.upper);
@@ -152,8 +166,14 @@ function MetricDetail({ metric }) {
         <LegendRow accent={cfg.accent} hasBand={!!band} />
       </div>
 
-      <SafeResponsiveContainer height={260}>
-        <ComposedChart data={points} margin={{ top: 5, right: 8, bottom: 0, left: -14 }}>
+      <SafeResponsiveContainer
+        height={260}
+        onMouseMove={resetFadeTimer}
+        onMouseDown={resetFadeTimer}
+        onTouchStart={resetFadeTimer}
+        onTouchMove={resetFadeTimer}
+      >
+        <ComposedChart key={chartKey} data={points} margin={{ top: 5, right: 8, bottom: 0, left: -14 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
           <XAxis
             dataKey="date"
@@ -182,19 +202,29 @@ function MetricDetail({ metric }) {
                     {formatMetricValue(metric, d.value)} {metricUnit(metric, data.unit)}
                   </div>
                   {d.rolling_7d != null && (
-                    <div style={{ color: 'var(--text-secondary)', marginTop: 2 }}>
+                    <div style={{ color: cfg.accent, opacity: 0.7, marginTop: 2 }}>
                       7-day avg: {formatMetricValue(metric, d.rolling_7d)} {metricUnit(metric, data.unit)}
+                    </div>
+                  )}
+                  {d.rolling_30d != null && (
+                    <div style={{ color: 'var(--text-secondary)', marginTop: 2 }}>
+                      30-day avg: {formatMetricValue(metric, d.rolling_30d)} {metricUnit(metric, data.unit)}
                     </div>
                   )}
                 </div>
               );
             }}
           />
-          <Scatter dataKey="value" fill={cfg.accent} fillOpacity={0.35} r={2.5} isAnimationActive={false} />
+          {/* Rendered as a dot-only Line (not Scatter) so the hover marker —
+              Recharts' activeDot — highlights the actual raw value, not a
+              smoothed average. */}
+          <Line type="monotone" dataKey="value" stroke="none" isAnimationActive={false}
+                dot={{ r: 2.5, fill: cfg.accent, fillOpacity: 0.35, strokeWidth: 0 }}
+                activeDot={{ r: 5, fill: cfg.accent, stroke: '#0d0d0f', strokeWidth: 2 }} />
           <Line type="monotone" dataKey="rolling_7d" stroke={cfg.accent} strokeWidth={2}
-                dot={false} isAnimationActive={false} />
+                dot={false} activeDot={false} isAnimationActive={false} />
           <Line type="monotone" dataKey="rolling_30d" stroke="var(--text-secondary)" strokeWidth={1.5}
-                strokeDasharray="5 4" dot={false} isAnimationActive={false} />
+                strokeDasharray="5 4" dot={false} activeDot={false} isAnimationActive={false} />
         </ComposedChart>
       </SafeResponsiveContainer>
 
@@ -213,7 +243,6 @@ export default function Body() {
   });
   const metrics = data?.metrics || [];
   const [selected, setSelected] = useState(null);
-  const selectedMetric = selected || metrics[0]?.metric || null;
 
   if (isLoading) {
     return (
@@ -246,25 +275,29 @@ export default function Body() {
           </div>
         </div>
       ) : (
-        <>
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))',
-            gap: 12,
-            marginBottom: 'var(--space-xl)',
-          }}>
-            {metrics.map(m => (
-              <MetricTile
-                key={m.metric}
-                data={m}
-                selected={m.metric === selectedMetric}
-                onClick={() => setSelected(m.metric)}
-              />
-            ))}
-          </div>
-
-          {selectedMetric && <MetricDetail metric={selectedMetric} />}
-        </>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))',
+          gap: 12,
+        }}>
+          {metrics.map(m => {
+            const isOpen = m.metric === selected;
+            return (
+              <Fragment key={m.metric}>
+                <MetricTile
+                  data={m}
+                  selected={isOpen}
+                  onClick={() => setSelected(isOpen ? null : m.metric)}
+                />
+                {isOpen && (
+                  <div style={{ gridColumn: '1 / -1' }}>
+                    <MetricDetail metric={m.metric} />
+                  </div>
+                )}
+              </Fragment>
+            );
+          })}
+        </div>
       )}
     </div>
   );

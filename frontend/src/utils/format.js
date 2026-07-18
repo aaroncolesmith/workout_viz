@@ -237,13 +237,25 @@ export function formatRelativeTo(dateStr, referenceDateStr) {
   return `${yrs}yr ${dir}`;
 }
 
-/** Format activity name with date, stripping a date HealthKit may have
- *  already baked into the name (e.g. "Run — 7/9/26") so it isn't doubled. */
+// Matches a trailing " - 7/9/26" / " — 7/9/26" (M/D/YY) or " – 2026-07-09"
+// (ISO) date suffix — the backend has embedded dates in both formats at
+// different times, and some already-synced activities have both chained
+// together (e.g. "Run – 2026-07-09 - 7/9/26").
+const DATE_SUFFIX_RE = /\s*[-—–]\s*(\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{2,4})\s*$/;
+
+/** Format activity name with date, stripping any date the backend may have
+ *  already baked into the name — repeatedly, so pre-existing rows with a
+ *  doubled-up date suffix collapse to a single clean one. */
 export function formatActivityName(act) {
   if (!act) return '';
   const d = parseLocalDate(act.date);
   const dateStr = d.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: '2-digit' });
-  const baseName = (act.name || '').replace(/\s*[-—]\s*\d{1,2}\/\d{1,2}\/\d{2,4}\s*$/, '');
+  let baseName = act.name || '';
+  let prev;
+  do {
+    prev = baseName;
+    baseName = baseName.replace(DATE_SUFFIX_RE, '');
+  } while (baseName !== prev);
   return `${baseName} - ${dateStr}`;
 }
 

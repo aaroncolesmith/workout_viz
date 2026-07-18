@@ -71,6 +71,29 @@ final class HealthKitManager {
         }
     }
 
+    /// Cheap count of every workout currently in HealthKit (metadata only — no
+    /// route/HR series fetched). Used to detect sync gaps by comparing against
+    /// the backend's synced count, so a missed/interrupted backfill can be
+    /// surfaced to the user instead of silently staying incomplete.
+    /// Count workouts on/after `since`. Must be bounded to match however far
+    /// back the app actually syncs (see `SyncEngine.backfillDepth`) — an
+    /// unbounded count would include HealthKit history from long before the
+    /// app existed, which the app never promises to sync, making any
+    /// gap-detection comparison against it a permanent false positive.
+    func countWorkouts(since: Date) async throws -> Int {
+        let predicate = HKQuery.predicateForSamples(withStart: since, end: nil, options: .strictStartDate)
+        return try await withCheckedThrowingContinuation { cont in
+            let query = HKSampleQuery(
+                sampleType: .workoutType(), predicate: predicate,
+                limit: HKObjectQueryNoLimit, sortDescriptors: nil
+            ) { _, samples, error in
+                if let error { cont.resume(throwing: error); return }
+                cont.resume(returning: samples?.count ?? 0)
+            }
+            store.execute(query)
+        }
+    }
+
     /// Register an observer query so HealthKit wakes the app when new workouts are
     /// saved.  Requires `UIBackgroundModes: ["healthkit"]` in Info.plist — enable
     /// the "Background Delivery" option in Xcode's HealthKit capability settings.
