@@ -6,9 +6,48 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		A11CE0000000000000000004 /* VolkenWidgetsExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A11CE0000000000000000001 /* VolkenWidgetsExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A11CE0000000000000000006 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 07BC05512F9A6DF10079192D /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A11CE0000000000000000010;
+			remoteInfo = VolkenWidgetsExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A11CE0000000000000000005 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				A11CE0000000000000000004 /* VolkenWidgetsExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		07BC05592F9A6DF10079192D /* WorkoutViz.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WorkoutViz.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A11CE0000000000000000001 /* VolkenWidgetsExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = VolkenWidgetsExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		A11CE0000000000000000003 /* Exceptions for "VolkenWidgets" folder in "VolkenWidgetsExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = A11CE0000000000000000010 /* VolkenWidgetsExtension */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		07BC055B2F9A6DF10079192D /* WorkoutViz */ = {
@@ -16,10 +55,25 @@
 			path = WorkoutViz;
 			sourceTree = "<group>";
 		};
+		A11CE0000000000000000002 /* VolkenWidgets */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				A11CE0000000000000000003 /* Exceptions for "VolkenWidgets" folder in "VolkenWidgetsExtension" target */,
+			);
+			path = VolkenWidgets;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		07BC05562F9A6DF10079192D /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A11CE0000000000000000009 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -33,6 +87,7 @@
 			isa = PBXGroup;
 			children = (
 				07BC055B2F9A6DF10079192D /* WorkoutViz */,
+				A11CE0000000000000000002 /* VolkenWidgets */,
 				07BC055A2F9A6DF10079192D /* Products */,
 			);
 			sourceTree = "<group>";
@@ -41,6 +96,7 @@
 			isa = PBXGroup;
 			children = (
 				07BC05592F9A6DF10079192D /* WorkoutViz.app */,
+				A11CE0000000000000000001 /* VolkenWidgetsExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -55,10 +111,12 @@
 				07BC05552F9A6DF10079192D /* Sources */,
 				07BC05562F9A6DF10079192D /* Frameworks */,
 				07BC05572F9A6DF10079192D /* Resources */,
+				A11CE0000000000000000005 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				A11CE0000000000000000007 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				07BC055B2F9A6DF10079192D /* WorkoutViz */,
@@ -70,7 +128,37 @@
 			productReference = 07BC05592F9A6DF10079192D /* WorkoutViz.app */;
 			productType = "com.apple.product-type.application";
 		};
+		A11CE0000000000000000010 /* VolkenWidgetsExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A11CE0000000000000000011 /* Build configuration list for PBXNativeTarget "VolkenWidgetsExtension" */;
+			buildPhases = (
+				A11CE0000000000000000008 /* Sources */,
+				A11CE0000000000000000009 /* Frameworks */,
+				A11CE000000000000000000A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				A11CE0000000000000000002 /* VolkenWidgets */,
+			);
+			name = VolkenWidgetsExtension;
+			packageProductDependencies = (
+			);
+			productName = VolkenWidgetsExtension;
+			productReference = A11CE0000000000000000001 /* VolkenWidgetsExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
+
+/* Begin PBXTargetDependency section */
+		A11CE0000000000000000007 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A11CE0000000000000000010 /* VolkenWidgetsExtension */;
+			targetProxy = A11CE0000000000000000006 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin PBXProject section */
 		07BC05512F9A6DF10079192D /* Project object */ = {
@@ -101,6 +189,7 @@
 			projectRoot = "";
 			targets = (
 				07BC05582F9A6DF10079192D /* WorkoutViz */,
+				A11CE0000000000000000010 /* VolkenWidgetsExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -113,10 +202,24 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A11CE000000000000000000A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		07BC05552F9A6DF10079192D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A11CE0000000000000000008 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -343,6 +446,64 @@
 			};
 			name = Release;
 		};
+		A11CE0000000000000000012 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = VolkenWidgets/VolkenWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = U57UF4V887;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = VolkenWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Volken;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = Aaronlytics.WorkoutViz.VolkenWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A11CE0000000000000000013 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = VolkenWidgets/VolkenWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = U57UF4V887;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = VolkenWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Volken;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = Aaronlytics.WorkoutViz.VolkenWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -360,6 +521,15 @@
 			buildConfigurations = (
 				07BC05652F9A6DF20079192D /* Debug */,
 				07BC05662F9A6DF20079192D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A11CE0000000000000000011 /* Build configuration list for PBXNativeTarget "VolkenWidgetsExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A11CE0000000000000000012 /* Debug */,
+				A11CE0000000000000000013 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

@@ -14,6 +14,10 @@ enum KeychainHelper {
         SecItemDelete(query as CFDictionary)
         var attrs = query
         attrs[kSecValueData as String] = data
+        // AfterFirstUnlock (not the WhenUnlocked default): the widget's
+        // timeline refreshes and background HK-observer syncs both run while
+        // the phone is locked, and each needs the device token.
+        attrs[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
         SecItemAdd(attrs as CFDictionary, nil)
     }
 
@@ -52,6 +56,7 @@ enum KeychainHelper {
         SecItemDelete(query as CFDictionary)
         var attrs = query
         attrs[kSecValueData as String] = data
+        attrs[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
         SecItemAdd(attrs as CFDictionary, nil)
     }
 

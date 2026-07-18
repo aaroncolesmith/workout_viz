@@ -231,8 +231,9 @@ does this credibly.
   imperial is hardcoded throughout `format.js`.
 - [ ] **PLT-3** — Empty/loading states for the first-sync experience: new users see
   skeletons + "syncing 2 years of history" progress, not blank charts.
-- [ ] **PLT-4** — Data export additions: include `health_metrics` in the COMP-2 ZIP
-  export and the COMP-1 purge.
+- [x] **PLT-4** — Data export additions: include `health_metrics` in the COMP-2 ZIP
+  export and the COMP-1 purge. (Purge already covered — it removes the whole
+  per-user dir; export now covers every table, with a schema-sync guard test.)
 - [ ] **PLT-5** — Performance guardrail: `health_metrics` sync + rolling-average
   endpoints must stay <100ms warm; extend the `seeded_backend` fixture with seeded
   metrics so all of Phase A/C/D is testable per the conftest pattern.

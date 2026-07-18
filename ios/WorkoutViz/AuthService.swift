@@ -34,6 +34,12 @@ final class AuthService: ObservableObject {
 
     private init() {
         sessionToken = KeychainHelper.load(key: tokenKey)
+        // Idempotent migration: re-save so an existing token picks up the
+        // AfterFirstUnlock accessibility (widget/background reads need it).
+        // Property observers don't fire during init, so this is explicit.
+        if let t = sessionToken {
+            KeychainHelper.save(t, key: tokenKey)
+        }
     }
 
     // MARK: - Authenticated requests
