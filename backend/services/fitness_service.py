@@ -360,11 +360,15 @@ def get_readiness_v2(*, conn) -> dict:
     from datetime import date as _date
     from backend.services import health_metrics_service as hm
 
+    from datetime import timezone as _tz
+    computed_at = datetime.now(_tz.utc).isoformat()
+
     data = get_fitness_data(conn=conn)
     if not data:
         return {"score": 50, "zone": "moderate",
                 "recommendation": "Not enough data yet — sync more activities.",
-                "ctl": 0, "atl": 0, "tsb": 0, "factors": [], "why": None}
+                "ctl": 0, "atl": 0, "tsb": 0, "factors": [], "why": None,
+                "computed_at": computed_at}
 
     latest = data[-1]
     tsb = latest["tsb"]
@@ -443,6 +447,7 @@ def get_readiness_v2(*, conn) -> dict:
         "tsb":            round(tsb, 1),
         "factors":        factors,
         "why":            " · ".join(f["detail"] for f in factors),
+        "computed_at":    computed_at,
     }
 
 

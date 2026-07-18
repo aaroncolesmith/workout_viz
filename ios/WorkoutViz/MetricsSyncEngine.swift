@@ -1,5 +1,6 @@
 import Foundation
 import HealthKit
+import WidgetKit
 
 /// Syncs daily health metrics (BIO-3) — resting HR, HRV, sleep, VO₂max, … —
 /// to POST /api/import/healthkit/metrics.
@@ -112,6 +113,9 @@ final class MetricsSyncEngine {
         if allOK {
             UserDefaults.standard.set(now, forKey: lastSyncKey)
             print("[MetricsSync] uploaded \(samples.count) daily samples")
+            // Fresh metrics changed what readiness would say — don't let the
+            // widget keep showing a stale score for up to 2 more hours.
+            WidgetCenter.shared.reloadAllTimelines()
         }
     }
 

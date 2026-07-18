@@ -285,11 +285,13 @@ struct ReadinessWidgetView: View {
                 if let h = snap.sleepHours {
                     statRow(label: "Sleep", value: fmtSleep(h), good: h >= 7)
                 }
-                if entry.stale {
-                    Text("offline · cached")
-                        .font(.system(size: 8))
-                        .foregroundStyle(.tertiary)
+                HStack(spacing: 3) {
+                    Text("as of")
+                    Text(snap.fetchedAt, style: .time)
+                    if entry.stale { Text("· offline") }
                 }
+                .font(.system(size: 8))
+                .foregroundStyle(.tertiary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

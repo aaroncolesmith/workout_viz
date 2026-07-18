@@ -32,11 +32,15 @@ def test_resting_hr_derived_from_health_metrics(seeded_backend):
 # ── RDY-2: blended readiness ─────────────────────────────────────────────────
 
 def test_readiness_v2_load_only_without_body_metrics(seeded_backend):
+    from datetime import datetime
+
     conn = seeded_backend["service"]._conn()
     r = get_readiness_v2(conn=conn)
     assert [f["name"] for f in r["factors"]] == ["Training load"]
     assert r["score"] == r["factors"][0]["score"]   # weights renormalise to load
     assert "TSB" in r["why"]
+    # Freshness stamp: parseable, tz-aware (the card/widget show "as of …")
+    assert datetime.fromisoformat(r["computed_at"]).tzinfo is not None
 
 
 def test_readiness_v2_poor_body_signals_drag_score_down(seeded_backend):

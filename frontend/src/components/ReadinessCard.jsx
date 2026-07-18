@@ -4,9 +4,24 @@
  * Queries GET /api/stats/readiness (backed by the TRIMP fitness model)
  * and renders a compact banner with score, zone, recommendation, and
  * CTL/ATL/TSB context numbers.
+ *
+ * Freshness: shows when the score was computed and offers a refresh.
+ * Inside the iOS app, refresh first asks native to re-sync HealthKit
+ * metrics (the honest "rerun" — new sleep/HRV may have landed since),
+ * waits for its volken:metricsSynced event, then refetches.
  */
-import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getReadiness } from '../utils/api';
+
+function formatAsOf(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  const sameDay = d.toDateString() === new Date().toDateString();
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return sameDay ? time : `${d.toLocaleDateString([], { month: 'numeric', day: 'numeric' })} ${time}`;
+}
 
 const ZONE_CONFIG = {
   peak:     { color: '#4ade80', bg: 'rgba(74,222,128,0.08)',  border: 'rgba(74,222,128,0.25)',  label: 'Peak Form'   },
@@ -21,16 +36,42 @@ const factorColor = (score) =>
   : score >= 30 ? '#fb923c' : '#f87171';
 
 export default function ReadinessCard() {
+  const qc = useQueryClient();
+  const [refreshing, setRefreshing] = useState(false);
   const { data, isLoading } = useQuery({
     queryKey: ['readiness'],
     queryFn: getReadiness,
     staleTime: 2 * 60 * 1000,
   });
 
+  const refresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      if (window.WorkoutVizNative?.refreshMetrics) {
+        // Ask native to pull fresh HealthKit metrics first; the sync posts
+        // volken:metricsSynced when done (15s cap in case it never fires).
+        const synced = new Promise(resolve =>
+          window.addEventListener('volken:metricsSynced', resolve, { once: true }));
+        window.WorkoutVizNative.refreshMetrics();
+        await Promise.race([synced, new Promise(r => setTimeout(r, 15000))]);
+      }
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['readiness'] }),
+        qc.invalidateQueries({ queryKey: ['readiness-history'] }),
+        qc.invalidateQueries({ queryKey: ['health-summary'] }),
+        qc.invalidateQueries({ queryKey: ['health-metric'] }),
+      ]);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   if (isLoading || !data) return null;
 
   const zone = ZONE_CONFIG[data.zone] || ZONE_CONFIG.moderate;
   const tsbSign = data.tsb >= 0 ? '+' : '';
+  const asOf = formatAsOf(data.computed_at);
 
   return (
     <div style={{
@@ -62,8 +103,24 @@ export default function ReadinessCard() {
 
       {/* Recommendation + explainable factors (RDY-2) */}
       <div style={{ flex: 1, minWidth: 180 }}>
-        <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2 }}>
-          Today's Recommendation
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 2 }}>
+          <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+            Today's Recommendation
+          </span>
+          <button
+            onClick={refresh}
+            disabled={refreshing}
+            title="Re-sync health data and recompute"
+            style={{
+              fontSize: '0.62rem', fontWeight: 600, cursor: refreshing ? 'default' : 'pointer',
+              padding: '1px 8px', borderRadius: 10,
+              color: zone.color, background: 'transparent',
+              border: `1px solid ${zone.border}`,
+              opacity: refreshing ? 0.6 : 1,
+            }}
+          >
+            {refreshing ? 'refreshing…' : `↻${asOf ? ` as of ${asOf}` : ''}`}
+          </button>
         </div>
         <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
           {data.recommendation}

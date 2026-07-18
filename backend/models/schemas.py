@@ -329,6 +329,7 @@ class ReadinessResponse(BaseModel):
     tsb: float
     factors: List[ReadinessFactor] = []
     why: Optional[str] = None  # one-line explanation joining the factors
+    computed_at: Optional[str] = None  # UTC ISO timestamp of this computation
 
 
 class ReadinessHistoryPoint(BaseModel):

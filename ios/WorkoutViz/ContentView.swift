@@ -38,6 +38,7 @@ struct WebView: UIViewRepresentable {
         wv.scrollView.alwaysBounceHorizontal = false
         wv.scrollView.bounces = true
         wv.scrollView.showsHorizontalScrollIndicator = false
+        context.coordinator.webView = wv   // for native→page events (refreshMetrics)
         return wv
     }
 
@@ -81,6 +82,7 @@ struct WebView: UIViewRepresentable {
             resetBackfill: function() { window.webkit.messageHandlers.wv.postMessage({cmd:'resetBackfill'}); },
             unauthorized:  function() { window.webkit.messageHandlers.wv.postMessage({cmd:'unauthorized'}); },
             openAccount:   function() { window.webkit.messageHandlers.wv.postMessage({cmd:'openAccount'}); },
+            refreshMetrics: function() { window.webkit.messageHandlers.wv.postMessage({cmd:'refreshMetrics'}); },
             available: true
         };
         """
@@ -109,6 +111,7 @@ struct WebView: UIViewRepresentable {
         let authService: AuthService
         var lastInjectedToken: String?
         var lastHandledDeepLink: String?
+        weak var webView: WKWebView?
 
         init(syncEngine: SyncEngine, authService: AuthService) {
             self.syncEngine = syncEngine
@@ -140,6 +143,19 @@ struct WebView: UIViewRepresentable {
                 Task { await syncEngine.performFullBackfill() }
             case "resetBackfill":
                 syncEngine.resetBackfillProgress()
+            case "refreshMetrics":
+                // The web ReadinessCard's refresh: pull fresh HealthKit daily
+                // metrics, then tell the page so it can refetch the score.
+                Task {
+                    // Plain sync: trailing 7-day re-fetch — cheap, and the
+                    // backend upsert absorbs anything that changed.
+                    await MetricsSyncEngine.shared.sync()
+                    await MainActor.run {
+                        self.webView?.evaluateJavaScript(
+                            "window.dispatchEvent(new CustomEvent('volken:metricsSynced'))",
+                            completionHandler: nil)
+                    }
+                }
             case "unauthorized":
                 authService.forgetDevice()
             case "openAccount":
