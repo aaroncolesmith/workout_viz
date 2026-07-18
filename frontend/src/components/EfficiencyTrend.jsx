@@ -11,6 +11,8 @@ import {
   ComposedChart, Line, Scatter, XAxis, YAxis, CartesianGrid, Tooltip,
 } from 'recharts';
 import { getEfficiencyTrend } from '../utils/api';
+import { CHART_MARGIN, GRID_PROPS, AXIS_TICK, SCRUB_CURSOR } from '../utils/chartkit';
+import ChartTooltip from './ChartTooltip';
 import { formatShortDate, formatDate, formatPace } from '../utils/format';
 import SafeResponsiveContainer from './SafeResponsiveContainer';
 
@@ -38,24 +40,24 @@ export default function EfficiencyTrend({ days = 365 }) {
         </div>
       )}
       <SafeResponsiveContainer height={230}>
-        <ComposedChart data={points} margin={{ top: 5, right: 8, bottom: 0, left: -14 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+        <ComposedChart data={points} margin={CHART_MARGIN}>
+          <CartesianGrid {...GRID_PROPS} />
           <XAxis
-            dataKey="date" tick={{ fontSize: 10 }}
+            dataKey="date" tick={AXIS_TICK}
             tickFormatter={v => formatShortDate(v)} minTickGap={28}
           />
           <YAxis
-            domain={['auto', 'auto']} tick={{ fontSize: 10 }} width={44}
+            domain={['auto', 'auto']} tick={AXIS_TICK} width={44}
             tickFormatter={v => v.toFixed(2)}
           />
           <Tooltip
+            cursor={SCRUB_CURSOR}
             content={({ active, payload }) => {
               if (!active || !payload?.length) return null;
               const d = payload[0]?.payload;
               if (!d) return null;
               return (
-                <div style={{ background: '#0d0d0f', border: '1px solid #2a2a32', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
-                  <div style={{ fontWeight: 600, marginBottom: 4 }}>{formatDate(d.date)}</div>
+                <ChartTooltip title={formatDate(d.date)}>
                   <div style={{ color: ACCENT, fontFamily: 'var(--font-display)' }}>
                     EF {d.ef.toFixed(2)} · {formatPace(d.pace)}/mi at {Math.round(d.avg_hr)} bpm
                   </div>
@@ -65,7 +67,7 @@ export default function EfficiencyTrend({ days = 365 }) {
                       {d.decoupling > 5 ? ' — faded late' : ' — held steady'}
                     </div>
                   )}
-                </div>
+                </ChartTooltip>
               );
             }}
           />

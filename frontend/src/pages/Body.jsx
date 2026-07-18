@@ -15,6 +15,8 @@ import { getHealthSummary, getHealthMetric } from '../utils/api';
 import { formatShortDate, formatDate } from '../utils/format';
 import { METRIC_CONFIG, formatMetricValue, metricUnit } from '../utils/metrics';
 import MetricTile from '../components/MetricTile';
+import { CHART_MARGIN, GRID_PROPS, AXIS_TICK, SCRUB_CURSOR } from '../utils/chartkit';
+import ChartTooltip from '../components/ChartTooltip';
 import SafeResponsiveContainer from '../components/SafeResponsiveContainer';
 
 const RANGES = [
@@ -173,15 +175,15 @@ function MetricDetail({ metric }) {
         onTouchStart={resetFadeTimer}
         onTouchMove={resetFadeTimer}
       >
-        <ComposedChart key={chartKey} data={points} margin={{ top: 5, right: 8, bottom: 0, left: -14 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+        <ComposedChart key={chartKey} data={points} margin={CHART_MARGIN}>
+          <CartesianGrid {...GRID_PROPS} />
           <XAxis
             dataKey="date"
-            tick={{ fontSize: 10 }}
+            tick={AXIS_TICK}
             tickFormatter={v => formatShortDate(v)}
             minTickGap={28}
           />
-          <YAxis domain={yDomain} tick={{ fontSize: 10 }} width={54}
+          <YAxis domain={yDomain} tick={AXIS_TICK} width={54}
                  tickFormatter={v => (Math.round(v * 10) / 10).toLocaleString()} />
           {band && (
             <ReferenceArea
@@ -191,13 +193,13 @@ function MetricDetail({ metric }) {
             />
           )}
           <Tooltip
+            cursor={SCRUB_CURSOR}
             content={({ active, payload }) => {
               if (!active || !payload?.length) return null;
               const d = payload[0]?.payload;
               if (!d) return null;
               return (
-                <div style={{ background: '#0d0d0f', border: '1px solid #2a2a32', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
-                  <div style={{ fontWeight: 600, marginBottom: 4 }}>{formatDate(d.date)}</div>
+                <ChartTooltip title={formatDate(d.date)}>
                   <div style={{ color: cfg.accent, fontFamily: 'var(--font-display)' }}>
                     {formatMetricValue(metric, d.value)} {metricUnit(metric, data.unit)}
                   </div>
@@ -211,7 +213,7 @@ function MetricDetail({ metric }) {
                       30-day avg: {formatMetricValue(metric, d.rolling_30d)} {metricUnit(metric, data.unit)}
                     </div>
                   )}
-                </div>
+                </ChartTooltip>
               );
             }}
           />

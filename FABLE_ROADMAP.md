@@ -223,10 +223,11 @@ does this credibly.
 
 ### Phase E — Platform & Polish (`PLT`) · ongoing
 
-- [ ] **PLT-1** — Lock-screen / home-screen **WidgetKit widgets**: readiness score +
+- [x] **PLT-1** — Lock-screen / home-screen **WidgetKit widgets**: readiness score +
   today's RHR/HRV deltas. Needs a small native data layer (widgets can't use the
   WKWebView) hitting `/api/health/summary` with the device token from the shared
-  Keychain group.
+  Keychain group. (VolkenWidgetsExtension: 4 widget families, shared keychain
+  group, AfterFirstUnlock token accessibility, cached-snapshot offline fallback.)
 - [ ] **PLT-2** — Unit preferences (mi/km, ft/m) in user_settings — currently
   imperial is hardcoded throughout `format.js`.
 - [ ] **PLT-3** — Empty/loading states for the first-sync experience: new users see

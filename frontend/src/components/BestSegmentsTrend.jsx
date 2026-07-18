@@ -1,9 +1,10 @@
 import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  ScatterChart, Scatter, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
+  ComposedChart, Scatter, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   Cell, ReferenceArea
 } from 'recharts';
+import { CHART_MARGIN, GRID_PROPS, AXIS_TICK, SCRUB_CURSOR, scrubLine } from '../utils/chartkit';
 import { useQuery } from '@tanstack/react-query';
 import { getBestSegmentsTrend } from '../utils/api';
 import { formatTime, formatDate, formatShortDate } from '../utils/format';
@@ -131,10 +132,13 @@ export default function BestSegmentsTrend() {
   });
 
   const rawData = useMemo(() => {
-    return (trendData?.data || []).map(d => ({
-      ...d,
-      timestamp: new Date(d.date + 'T12:00:00').getTime()
-    }));
+    return (trendData?.data || [])
+      .map(d => ({
+        ...d,
+        timestamp: new Date(d.date + 'T12:00:00').getTime()
+      }))
+      // The scrub line snaps to nearest-x by data order — keep it sorted.
+      .sort((a, b) => a.timestamp - b.timestamp);
   }, [trendData]);
 
   // Identify top 3 and top 10
@@ -240,40 +244,43 @@ export default function BestSegmentsTrend() {
             </div>
 
             <SafeResponsiveContainer height={280}>
-              <ScatterChart
-                margin={{ left: 10, right: 10, top: 10, bottom: 0 }}
+              <ComposedChart
+                data={rawData}
+                margin={CHART_MARGIN}
                 style={{ cursor: zoom.isDragging ? 'col-resize' : 'crosshair' }}
                 onMouseDown={zoom.onMouseDown}
                 onMouseMove={zoom.onMouseMove}
                 onMouseUp={zoom.onMouseUp}
                 onMouseLeave={zoom.onMouseLeave}
               >
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                <CartesianGrid {...GRID_PROPS} vertical={false} />
                 <XAxis
                   dataKey="timestamp"
                   type="number"
                   scale="time"
                   ticks={xAxisTicks}
-                  tick={{ fontSize: 10, fill: '#64748b' }}
+                  tick={AXIS_TICK}
                   tickFormatter={v => formatShortDate(new Date(v).toISOString().split('T')[0])}
                   domain={zoom.xDomain || ['auto', 'auto']}
                   allowDataOverflow={zoom.isZoomed}
                 />
                 <YAxis
                   dataKey="time_seconds"
-                  tick={{ fontSize: 10, fill: '#64748b' }}
+                  tick={AXIS_TICK}
                   tickFormatter={v => formatTime(v)}
                   domain={zoom.yDomain || ['auto', 'auto']}
                   allowDataOverflow={zoom.isZoomed}
                   reversed
                 />
                 <Tooltip
+                  cursor={SCRUB_CURSOR}
                   content={<TooltipContent top3Ids={top3Ids} navigate={navigate} />}
                   wrapperStyle={{ pointerEvents: 'none', zIndex: 1000 }}
                 />
                 <Scatter
-                  data={rawData}
+                  dataKey="time_seconds"
                   fill={CHART_COLOR}
+                  isAnimationActive={false}
                   onClick={(d) => navigate(`/activity/${d.activity_id}`)}
                 >
                   {rawData.map((d, i) => (
@@ -288,10 +295,11 @@ export default function BestSegmentsTrend() {
                     />
                   ))}
                 </Scatter>
+                <Line {...scrubLine('time_seconds', CHART_COLOR)} />
                 {zoom.referenceAreaProps && (
                   <ReferenceArea {...zoom.referenceAreaProps} fill="rgba(56, 189, 248, 0.1)" />
                 )}
-              </ScatterChart>
+              </ComposedChart>
             </SafeResponsiveContainer>
           </div>
 

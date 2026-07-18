@@ -2,6 +2,8 @@ import React, { useMemo } from 'react';
 import { BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 import SafeResponsiveContainer from './SafeResponsiveContainer';
 import { formatTime, formatHR } from '../utils/format';
+import { CHART_MARGIN, GRID_PROPS, AXIS_TICK, BAR_CURSOR } from '../utils/chartkit';
+import ChartTooltip from './ChartTooltip';
 
 const ACCENT = '#26c6f9';
 const HR_ACCENT = '#f472b6';
@@ -55,25 +57,22 @@ export default function MileSplitsView({ mileSplits, handleFetchDetails, syncing
         </div>
 
         <SafeResponsiveContainer height={220}>
-          <BarChart data={mileSplits} margin={{ top: 5, right: 8, bottom: 0, left: -14 }}>
+          <BarChart data={mileSplits} margin={CHART_MARGIN}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
             <XAxis
               dataKey="mile"
-              tick={{ fontSize: 10 }}
+              tick={AXIS_TICK}
               tickFormatter={v => `${v}`}
             />
-            <YAxis tick={{ fontSize: 10 }} width={46} tickFormatter={v => formatTime(v)} />
+            <YAxis tick={AXIS_TICK} width={46} tickFormatter={v => formatTime(v)} />
             <Tooltip
-              cursor={{ fill: 'rgba(255,255,255,0.04)' }}
+              cursor={BAR_CURSOR}
               content={({ active, payload }) => {
                 if (!active || !payload?.length) return null;
                 const d = payload[0]?.payload;
                 if (!d) return null;
                 return (
-                  <div style={{ background: '#0d0d0f', border: '1px solid #2a2a32', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
-                    <div style={{ fontWeight: 600, marginBottom: 4 }}>
-                      Mile {d.mile}{d.partial ? ' (partial)' : ''}
-                    </div>
+                  <ChartTooltip title={`Mile ${d.mile}${d.partial ? ' (partial)' : ''}`}>
                     <div style={{ color: ACCENT, fontFamily: 'var(--font-display)' }}>
                       {formatTime(d.time_seconds)} {!d.partial && `(${paceOf(d).toFixed(2)}/mi pace)`}
                     </div>
@@ -82,7 +81,7 @@ export default function MileSplitsView({ mileSplits, handleFetchDetails, syncing
                         {formatHR(d.avg_hr)} bpm avg
                       </div>
                     )}
-                  </div>
+                  </ChartTooltip>
                 );
               }}
             />

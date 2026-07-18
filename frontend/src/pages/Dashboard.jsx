@@ -1,9 +1,13 @@
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip,
+  ComposedChart, Scatter, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   BarChart, Bar, Cell, ReferenceArea,
 } from 'recharts';
+import {
+  CHART_MARGIN, GRID_PROPS, AXIS_TICK, SCRUB_CURSOR, BAR_CURSOR, scrubLine,
+} from '../utils/chartkit';
+import ChartTooltip from '../components/ChartTooltip';
 import { useQuery } from '@tanstack/react-query';
 import { getOverview, getTrends, getBestPRs } from '../utils/api';
 import {
@@ -201,6 +205,21 @@ export default function Dashboard() {
   }, [filteredTrends]);
 
 
+
+  // Per-chart data (memoized once — the chart, its scrub line, and its
+  // cells must all see the same array)
+  const paceData = useMemo(
+    () => filteredTrends.filter(t => t.pace && t.pace > 0 && t.pace < 20),
+    [filteredTrends]);
+  const hrData = useMemo(
+    () => filteredTrends.filter(t => t.average_heartrate),
+    [filteredTrends]);
+  const pvhrData = useMemo(
+    () => filteredTrends
+      .filter(t => t.pace && t.pace > 4 && t.pace < 20 && t.average_heartrate)
+      .slice()
+      .sort((a, b) => a.pace - b.pace),   // numeric x-axis: scrub needs order
+    [filteredTrends]);
 
   // Weekly mileage aggregation
   const weeklyMiles = useMemo(() => {
@@ -410,18 +429,20 @@ export default function Dashboard() {
           </div>
           <ZoomHint isZoomed={paceZoom.isZoomed} onReset={paceZoom.reset} color="#26c6f9" />
           <SafeResponsiveContainer height={240}>
-            <ScatterChart
+            <ComposedChart
+              data={paceData}
+              margin={CHART_MARGIN}
               style={{ cursor: paceZoom.isDragging ? 'col-resize' : 'crosshair' }}
               onMouseDown={paceZoom.onMouseDown}
               onMouseMove={paceZoom.onMouseMove}
               onMouseUp={paceZoom.onMouseUp}
               onMouseLeave={paceZoom.onMouseLeave}
             >
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+              <CartesianGrid {...GRID_PROPS} />
               <XAxis
                 dataKey="date"
                 type="category"
-                tick={{ fontSize: 10 }}
+                tick={AXIS_TICK}
                 tickFormatter={v => formatShortDate(v)}
                 domain={paceZoom.xDomain}
                 allowDataOverflow={paceZoom.isZoomed}
@@ -431,34 +452,34 @@ export default function Dashboard() {
                 type="number"
                 domain={paceZoom.yDomain ?? [5, 15]}
                 reversed
-                tick={{ fontSize: 10 }}
+                tick={AXIS_TICK}
                 tickFormatter={v => formatPace(v)}
                 allowDataOverflow={paceZoom.isZoomed}
                 label={{ value: 'Pace (min/mi)', angle: -90, position: 'insideLeft', style: { fill: '#64748b', fontSize: 11 } }}
               />
               <Tooltip
+                cursor={SCRUB_CURSOR}
                 content={({ active, payload }) => {
                   if (!active || !payload?.length) return null;
                   const d = payload[0]?.payload;
                   if (!d) return null;
                   return (
-                    <div style={{ background: '#0d0d0f', border: '1px solid #2a2a32', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
-                      <div style={{ fontWeight: 600, marginBottom: 4 }}>{formatActivityName(d)}</div>
-                      <div style={{ color: '#26c6f9', fontFamily: "var(--font-display)" }}>
-                        {formatPace(d.pace)} /mi · {formatDistance(d.distance_miles)} mi
-                      </div>
-                    </div>
+                    <ChartTooltip
+                      title={formatActivityName(d)}
+                      rows={[{ color: '#26c6f9', mono: true, text: `${formatPace(d.pace)} /mi · ${formatDistance(d.distance_miles)} mi` }]}
+                    />
                   );
                 }}
               />
-              <Scatter data={filteredTrends.filter(t => t.pace && t.pace > 0 && t.pace < 20)} fill="#26c6f9" fillOpacity={0.5} r={3}>
-                {filteredTrends.filter(t => t.pace && t.pace > 0 && t.pace < 20).map((t, i) => (
+              <Scatter dataKey="pace" fillOpacity={0.5} isAnimationActive={false}>
+                {paceData.map((t, i) => (
                   <Cell key={i} fill={activityColor(t.type)} fillOpacity={0.6} />
                 ))}
               </Scatter>
+              <Line {...scrubLine('pace', '#26c6f9')} />
 
               {paceZoom.referenceAreaProps && <ReferenceArea {...paceZoom.referenceAreaProps} />}
-            </ScatterChart>
+            </ComposedChart>
           </SafeResponsiveContainer>
         </div>
 
@@ -472,30 +493,30 @@ export default function Dashboard() {
           <SafeResponsiveContainer height={240}>
             <BarChart
               data={weekZoom.isZoomed ? weekZoom.filteredData : weeklyMiles}
+              margin={CHART_MARGIN}
               style={{ cursor: weekZoom.isDragging ? 'col-resize' : 'crosshair' }}
               onMouseDown={weekZoom.onMouseDown}
               onMouseMove={weekZoom.onMouseMove}
               onMouseUp={weekZoom.onMouseUp}
               onMouseLeave={weekZoom.onMouseLeave}
             >
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+              <CartesianGrid {...GRID_PROPS} />
               <XAxis
                 dataKey="week"
-                tick={{ fontSize: 10 }}
+                tick={AXIS_TICK}
                 tickFormatter={v => v ? v.slice(5) : ''}
               />
-              <YAxis tick={{ fontSize: 10 }} />
+              <YAxis tick={AXIS_TICK} />
               <Tooltip
+                cursor={BAR_CURSOR}
                 content={({ active, payload }) => {
                   if (!active || !payload?.length) return null;
                   const d = payload[0]?.payload;
                   return (
-                    <div style={{ background: '#0d0d0f', border: '1px solid #2a2a32', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
-                      <div style={{ fontWeight: 600 }}>Week of {d.week}</div>
-                      <div style={{ color: '#a78bfa', fontFamily: "var(--font-display)" }}>
-                        {d.miles.toFixed(1)} mi · {d.count} activities
-                      </div>
-                    </div>
+                    <ChartTooltip
+                      title={`Week of ${d.week}`}
+                      rows={[{ color: '#a78bfa', mono: true, text: `${d.miles.toFixed(1)} mi · ${d.count} activities` }]}
+                    />
                   );
                 }}
               />
@@ -512,18 +533,20 @@ export default function Dashboard() {
           </div>
           <ZoomHint isZoomed={hrZoom.isZoomed} onReset={hrZoom.reset} color="#f472b6" />
           <SafeResponsiveContainer height={240}>
-            <ScatterChart
+            <ComposedChart
+              data={hrData}
+              margin={CHART_MARGIN}
               style={{ cursor: hrZoom.isDragging ? 'col-resize' : 'crosshair' }}
               onMouseDown={hrZoom.onMouseDown}
               onMouseMove={hrZoom.onMouseMove}
               onMouseUp={hrZoom.onMouseUp}
               onMouseLeave={hrZoom.onMouseLeave}
             >
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+              <CartesianGrid {...GRID_PROPS} />
               <XAxis
                 dataKey="date"
                 type="category"
-                tick={{ fontSize: 10 }}
+                tick={AXIS_TICK}
                 tickFormatter={v => formatShortDate(v)}
                 domain={hrZoom.xDomain}
                 allowDataOverflow={hrZoom.isZoomed}
@@ -532,31 +555,31 @@ export default function Dashboard() {
                 dataKey="average_heartrate"
                 type="number"
                 domain={hrZoom.yDomain ?? [80, 200]}
-                tick={{ fontSize: 10 }}
+                tick={AXIS_TICK}
                 allowDataOverflow={hrZoom.isZoomed}
               />
               <Tooltip
+                cursor={SCRUB_CURSOR}
                 content={({ active, payload }) => {
                   if (!active || !payload?.length) return null;
                   const d = payload[0]?.payload;
                   return (
-                    <div style={{ background: '#0d0d0f', border: '1px solid #2a2a32', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
-                      <div style={{ fontWeight: 600 }}>{formatActivityName(d)}</div>
-                      <div style={{ color: '#f472b6', fontFamily: "var(--font-display)" }}>
-                        Avg {formatHR(d.average_heartrate)} bpm · Max {formatHR(d.max_heartrate)} bpm
-                      </div>
-                    </div>
+                    <ChartTooltip
+                      title={formatActivityName(d)}
+                      rows={[{ color: '#f472b6', mono: true, text: `Avg ${formatHR(d.average_heartrate)} bpm · Max ${formatHR(d.max_heartrate)} bpm` }]}
+                    />
                   );
                 }}
               />
-              <Scatter data={filteredTrends.filter(t => t.average_heartrate)} fillOpacity={0.5} r={3}>
-                {filteredTrends.filter(t => t.average_heartrate).map((t, i) => (
+              <Scatter dataKey="average_heartrate" fillOpacity={0.5} isAnimationActive={false}>
+                {hrData.map((t, i) => (
                   <Cell key={i} fill={activityColor(t.type)} fillOpacity={0.5} />
                 ))}
               </Scatter>
+              <Line {...scrubLine('average_heartrate', '#f472b6')} />
 
               {hrZoom.referenceAreaProps && <ReferenceArea {...hrZoom.referenceAreaProps} />}
-            </ScatterChart>
+            </ComposedChart>
           </SafeResponsiveContainer>
         </div>
 
@@ -568,19 +591,21 @@ export default function Dashboard() {
           </div>
           <ZoomHint isZoomed={pvhrZoom.isZoomed} onReset={pvhrZoom.reset} color="#a78bfa" />
           <SafeResponsiveContainer height={240}>
-            <ScatterChart
+            <ComposedChart
+              data={pvhrData}
+              margin={CHART_MARGIN}
               style={{ cursor: pvhrZoom.isDragging ? 'col-resize' : 'crosshair' }}
               onMouseDown={pvhrZoom.onMouseDown}
               onMouseMove={pvhrZoom.onMouseMove}
               onMouseUp={pvhrZoom.onMouseUp}
               onMouseLeave={pvhrZoom.onMouseLeave}
             >
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+              <CartesianGrid {...GRID_PROPS} />
               <XAxis
                 dataKey="pace"
                 type="number"
                 domain={pvhrZoom.xDomain ?? [5, 15]}
-                tick={{ fontSize: 10 }}
+                tick={AXIS_TICK}
                 tickFormatter={v => formatPace(v)}
                 allowDataOverflow={pvhrZoom.isZoomed}
                 label={{ value: 'Pace', position: 'insideBottom', offset: -5, style: { fill: '#64748b', fontSize: 11 } }}
@@ -589,37 +614,34 @@ export default function Dashboard() {
                 dataKey="average_heartrate"
                 type="number"
                 domain={pvhrZoom.yDomain ?? [100, 190]}
-                tick={{ fontSize: 10 }}
+                tick={AXIS_TICK}
                 allowDataOverflow={pvhrZoom.isZoomed}
                 label={{ value: 'Avg HR', angle: -90, position: 'insideLeft', style: { fill: '#64748b', fontSize: 11 } }}
               />
               <Tooltip
+                cursor={SCRUB_CURSOR}
                 content={({ active, payload }) => {
                   if (!active || !payload?.length) return null;
                   const d = payload[0]?.payload;
                   return (
-                    <div style={{ background: '#0d0d0f', border: '1px solid #2a2a32', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
-                      <div style={{ fontWeight: 600 }}>{formatActivityName(d)}</div>
-                      <div style={{ fontFamily: "var(--font-display)" }}>
+                    <ChartTooltip title={formatActivityName(d)}>
+                      <div style={{ fontFamily: 'var(--font-display)' }}>
                         <span style={{ color: '#26c6f9' }}>{formatPace(d.pace)} /mi</span>{' · '}
                         <span style={{ color: '#f472b6' }}>{formatHR(d.average_heartrate)} bpm</span>
                       </div>
-                    </div>
+                    </ChartTooltip>
                   );
                 }}
               />
-              <Scatter
-                data={filteredTrends.filter(t => t.pace && t.pace > 4 && t.pace < 20 && t.average_heartrate)}
-                fillOpacity={0.5}
-                r={3}
-              >
-                {filteredTrends.filter(t => t.pace && t.pace > 4 && t.pace < 20 && t.average_heartrate).map((t, i) => (
+              <Scatter dataKey="average_heartrate" fillOpacity={0.5} isAnimationActive={false}>
+                {pvhrData.map((t, i) => (
                   <Cell key={i} fill={activityColor(t.type)} fillOpacity={0.5} />
                 ))}
               </Scatter>
+              <Line {...scrubLine('average_heartrate', '#a78bfa')} />
 
               {pvhrZoom.referenceAreaProps && <ReferenceArea {...pvhrZoom.referenceAreaProps} />}
-            </ScatterChart>
+            </ComposedChart>
           </SafeResponsiveContainer>
         </div>
       </div>

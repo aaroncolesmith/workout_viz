@@ -8,6 +8,8 @@ import { useNavigate } from 'react-router-dom';
 
 import { getRoutes, getRoute, buildRoutes, renameRoute } from '../utils/api';
 import { formatDate, formatRelativeAge } from '../utils/format';
+import { GRID_PROPS, AXIS_TICK, SCRUB_CURSOR } from '../utils/chartkit';
+import ChartTooltip from '../components/ChartTooltip';
 
 const TYPES = ['Run', 'Ride', 'Hike'];
 const TYPE_COLOR = { Run: '#38bdf8', Ride: '#818cf8', Hike: '#34d399' };
@@ -57,7 +59,7 @@ function PaceSpark({ data, color }) {
             const m = Math.floor(v); const s = Math.round((v - m) * 60);
             return [`${m}:${s.toString().padStart(2,'0')}/mi`, 'Pace'];
           }}
-          contentStyle={{ background: '#0a0e1a', border: '1px solid rgba(255,255,255,0.1)', fontSize: '0.7rem' }}
+          contentStyle={{ background: '#0d0d0f', border: '1px solid #2a2a32', borderRadius: 8, fontSize: '0.7rem' }}
         />
       </LineChart>
     </ResponsiveContainer>
@@ -273,16 +275,16 @@ function AttemptsTrend({ activities, color, bestId }) {
   };
   const tooltip = (
     <Tooltip
+      cursor={SCRUB_CURSOR}
       content={({ active, payload }) => {
         if (!active || !payload?.length) return null;
         const d = payload[0]?.payload;
         if (!d) return null;
         return (
-          <div style={{ background: '#0a0e1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, padding: '6px 10px', fontSize: '0.7rem' }}>
-            <div style={{ fontWeight: 600, marginBottom: 2 }}>{formatDate(d.date)}{d.id === bestId ? ' ★' : ''}</div>
+          <ChartTooltip title={`${formatDate(d.date)}${d.id === bestId ? ' ★' : ''}`}>
             <div style={{ color }}>{fmtMin(d.moving_time_min)} · {d.pace_str}/mi</div>
             {d.average_heartrate && <div style={{ color: '#f472b6' }}>{d.average_heartrate} bpm</div>}
-          </div>
+          </ChartTooltip>
         );
       }}
     />
@@ -300,9 +302,9 @@ function AttemptsTrend({ activities, color, bestId }) {
       </div>
       <ResponsiveContainer width="100%" height={150}>
         <ComposedChart data={attempts} margin={{ top: 6, right: 8, bottom: 0, left: -8 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-          <XAxis dataKey="date" tick={{ fontSize: 9 }} tickFormatter={v => v ? v.slice(5) : ''} minTickGap={24} />
-          <YAxis domain={['auto', 'auto']} tick={{ fontSize: 9 }} tickFormatter={fmtMin} width={52} />
+          <CartesianGrid {...GRID_PROPS} />
+          <XAxis dataKey="date" tick={AXIS_TICK} tickFormatter={v => v ? v.slice(5) : ''} minTickGap={24} />
+          <YAxis domain={['auto', 'auto']} tick={AXIS_TICK} tickFormatter={fmtMin} width={52} />
           {tooltip}
           <Line type="monotone" dataKey="moving_time_min" stroke={color} strokeWidth={2} dot={false} isAnimationActive={false} />
           <Scatter dataKey="moving_time_min" isAnimationActive={false}>
@@ -321,7 +323,7 @@ function AttemptsTrend({ activities, color, bestId }) {
           <ResponsiveContainer width="100%" height={60}>
             <ComposedChart data={attempts} margin={{ top: 4, right: 8, bottom: 0, left: -8 }}>
               <XAxis dataKey="date" hide />
-              <YAxis domain={['auto', 'auto']} tick={{ fontSize: 9 }} width={52} />
+              <YAxis domain={['auto', 'auto']} tick={AXIS_TICK} width={52} />
               {tooltip}
               <Line type="monotone" dataKey="average_heartrate" stroke="#f472b6" strokeWidth={1.5} dot={{ r: 2, fill: '#f472b6' }} isAnimationActive={false} connectNulls />
             </ComposedChart>

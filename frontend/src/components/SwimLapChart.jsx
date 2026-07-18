@@ -3,6 +3,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ReferenceLine, Cell, ResponsiveContainer,
 } from 'recharts';
+import { CHART_MARGIN, BAR_CURSOR } from '../utils/chartkit';
 import { formatDate } from '../utils/format';
 
 const STROKE_COLORS = {
@@ -254,7 +255,7 @@ export default function SwimLapChart({ swimData, compareSwimData, swimActivities
 
       {/* Chart */}
       <ResponsiveContainer width="100%" height={240}>
-        <BarChart data={chartData} margin={{ top: 4, right: 4, left: -16, bottom: 0 }} barCategoryGap="20%">
+        <BarChart data={chartData} margin={CHART_MARGIN} barCategoryGap="20%">
           <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.04)" />
           <XAxis
             dataKey="lap_number"
@@ -270,7 +271,7 @@ export default function SwimLapChart({ swimData, compareSwimData, swimActivities
             axisLine={false}
             width={38}
           />
-          <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255,255,255,0.03)' }} />
+          <Tooltip content={<CustomTooltip />} cursor={BAR_CURSOR} />
           {avg_pace_per_100 && (
             <ReferenceLine
               y={avg_pace_per_100}

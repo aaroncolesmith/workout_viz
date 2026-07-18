@@ -18,6 +18,7 @@ import {
 } from 'recharts';
 import { useQuery } from '@tanstack/react-query';
 import { getFitnessData } from '../utils/api';
+import { SCRUB_CURSOR } from '../utils/chartkit';
 
 const COLORS = {
   ctl:    '#34d399',   // green  — fitness
@@ -47,11 +48,11 @@ function CustomTooltip({ active, payload, label }) {
 
   return (
     <div style={{
-      background: 'rgba(19,19,19,0.95)',
-      border: '1px solid rgba(255,255,255,0.15)',
+      background: '#0d0d0f',
+      border: '1px solid #2a2a32',
       borderRadius: 8,
-      padding: '10px 14px',
-      fontSize: '0.75rem',
+      padding: '8px 12px',
+      fontSize: 12,
       minWidth: 160,
     }}>
       <div style={{ color: 'var(--text-secondary)', marginBottom: 6, fontWeight: 600 }}>
@@ -204,7 +205,7 @@ export default function FitnessChart() {
             tickLine={false}
             width={36}
           />
-          <Tooltip content={<CustomTooltip />} />
+          <Tooltip cursor={SCRUB_CURSOR} content={<CustomTooltip />} />
 
           <ReferenceLine yAxisId="form" y={0} stroke="rgba(255,255,255,0.08)" strokeDasharray="4 4" />
 

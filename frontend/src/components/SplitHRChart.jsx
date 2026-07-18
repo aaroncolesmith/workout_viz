@@ -1,6 +1,8 @@
 import React, { useMemo } from 'react';
 import { ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 import SafeResponsiveContainer from './SafeResponsiveContainer';
+import { CHART_MARGIN, GRID_PROPS, AXIS_TICK, SCRUB_CURSOR } from '../utils/chartkit';
+import ChartTooltip from './ChartTooltip';
 import { formatTime, formatHR } from '../utils/format';
 
 const ACCENT = '#f472b6';
@@ -64,26 +66,24 @@ export default function SplitHRChart({
             </span>
           </div>
           <SafeResponsiveContainer height={250}>
-            <ComposedChart data={splitChartData} margin={{ top: 5, right: 8, bottom: 0, left: -14 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+            <ComposedChart data={splitChartData} margin={CHART_MARGIN}>
+              <CartesianGrid {...GRID_PROPS} />
               <XAxis
                 dataKey={xAxisType === 'distance' ? 'mile' : 'time'}
                 type={xAxisType === 'distance' ? 'category' : 'number'}
-                tick={{ fontSize: 10 }}
+                tick={AXIS_TICK}
                 tickFormatter={v => xAxisType === 'distance' ? `${v}mi` : formatTime(v)}
                 minTickGap={28}
               />
-              <YAxis domain={yDomain} tick={{ fontSize: 10 }} width={40} />
+              <YAxis domain={yDomain} tick={AXIS_TICK} width={40} />
               <Tooltip
+                cursor={SCRUB_CURSOR}
                 content={({ active, payload }) => {
                   if (!active || !payload?.length) return null;
                   const d = payload[0]?.payload;
                   if (!d) return null;
                   return (
-                    <div style={{ background: '#0d0d0f', border: '1px solid #2a2a32', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
-                      <div style={{ fontWeight: 600, marginBottom: 4 }}>
-                        {xAxisType === 'distance' ? `Mile ${d.mile}` : formatTime(d.time)}
-                      </div>
+                    <ChartTooltip title={xAxisType === 'distance' ? `Mile ${d.mile}` : formatTime(d.time)}>
                       {d.avg_hr != null && (
                         <div style={{ color: ACCENT, fontFamily: 'var(--font-display)' }}>
                           {formatHR(d.avg_hr)} bpm
@@ -94,7 +94,7 @@ export default function SplitHRChart({
                           trend: {formatHR(d.hr_smooth)} bpm
                         </div>
                       )}
-                    </div>
+                    </ChartTooltip>
                   );
                 }}
               />
