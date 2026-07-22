@@ -19,6 +19,7 @@ import {
 import { useQuery } from '@tanstack/react-query';
 import { getFitnessData } from '../utils/api';
 import { SCRUB_CURSOR } from '../utils/chartkit';
+import { formatShortDate, formatDate } from '../utils/format';
 
 const COLORS = {
   ctl:    '#34d399',   // green  — fitness
@@ -27,18 +28,6 @@ const COLORS = {
   tsbNeg: '#f87171',   // red    — fatigued form
   stress: '#394040',   // dark   — daily load bars
 };
-
-// Seconds → "M:SS" display — not used here but kept for consistency
-function fmtDate(str) {
-  if (!str) return '';
-  // YYYY-MM-DD → "Apr 14"
-  try {
-    const d = new Date(str + 'T00:00:00');
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  } catch {
-    return str;
-  }
-}
 
 function CustomTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
@@ -56,7 +45,7 @@ function CustomTooltip({ active, payload, label }) {
       minWidth: 160,
     }}>
       <div style={{ color: 'var(--text-secondary)', marginBottom: 6, fontWeight: 600 }}>
-        {fmtDate(label)}
+        {formatDate(label)}
       </div>
       {byKey.ctl !== undefined && (
         <div style={{ color: COLORS.ctl, marginBottom: 3 }}>
@@ -83,22 +72,23 @@ function CustomTooltip({ active, payload, label }) {
 }
 
 const DATE_PRESETS = [
-  { label: '3 Mo', months: 3 },
-  { label: '6 Mo', months: 6 },
-  { label: '1 Yr', months: 12 },
-  { label: '2 Yr', months: 24 },
-  { label: 'All',  months: null },
+  { label: '30D', days: 30 },
+  { label: '3 Mo', days: 90 },
+  { label: '6 Mo', days: 182 },
+  { label: '1 Yr', days: 365 },
+  { label: '2 Yr', days: 730 },
+  { label: 'All',  days: null },
 ];
 
 export default function FitnessChart() {
-  const [months, setMonths] = useState(6);
+  const [days, setDays] = useState(182);
 
   const dateFrom = useMemo(() => {
-    if (!months) return null;
+    if (!days) return null;
     const d = new Date();
-    d.setMonth(d.getMonth() - months);
+    d.setDate(d.getDate() - days);
     return d.toISOString().slice(0, 10);
-  }, [months]);
+  }, [days]);
 
   const { data: fitnessResult, isLoading } = useQuery({
     queryKey: ['fitness', dateFrom],
@@ -160,15 +150,15 @@ export default function FitnessChart() {
             {DATE_PRESETS.map(p => (
               <button
                 key={p.label}
-                onClick={() => setMonths(p.months)}
+                onClick={() => setDays(p.days)}
                 className="filter-chip"
                 style={{
                   fontSize: '0.62rem',
                   padding: '2px 8px',
-                  opacity: months === p.months ? 1 : 0.45,
-                  background: months === p.months ? 'rgba(52,211,153,0.12)' : undefined,
-                  borderColor: months === p.months ? 'rgba(52,211,153,0.4)' : undefined,
-                  color: months === p.months ? '#34d399' : undefined,
+                  opacity: days === p.days ? 1 : 0.45,
+                  background: days === p.days ? 'rgba(52,211,153,0.12)' : undefined,
+                  borderColor: days === p.days ? 'rgba(52,211,153,0.4)' : undefined,
+                  color: days === p.days ? '#34d399' : undefined,
                 }}
               >
                 {p.label}
@@ -184,11 +174,12 @@ export default function FitnessChart() {
           <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
           <XAxis
             dataKey="date"
-            tickFormatter={fmtDate}
+            tickFormatter={v => formatShortDate(v)}
             tick={{ fill: '#555', fontSize: 10 }}
             axisLine={false}
             tickLine={false}
             interval="preserveStartEnd"
+            minTickGap={28}
           />
           <YAxis
             yAxisId="load"
