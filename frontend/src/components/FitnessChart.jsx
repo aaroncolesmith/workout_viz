@@ -180,7 +180,7 @@ export default function FitnessChart() {
 
       {/* ── CTL / ATL chart ── */}
       <ResponsiveContainer width="100%" height={300}>
-        <ComposedChart data={chartData} margin={{ top: 10, right: 40, left: -20, bottom: 0 }}>
+        <ComposedChart data={chartData} margin={{ top: 10, right: 2, left: -20, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
           <XAxis
             dataKey="date"
@@ -203,7 +203,7 @@ export default function FitnessChart() {
             tick={{ fill: '#444', fontSize: 9 }}
             axisLine={false}
             tickLine={false}
-            width={36}
+            width={30}
           />
           <Tooltip cursor={SCRUB_CURSOR} content={<CustomTooltip />} />
 
