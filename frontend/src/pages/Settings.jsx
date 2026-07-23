@@ -136,6 +136,10 @@ export default function Settings() {
       >
         <AccountSection />
       </SettingsSection>
+
+      <div style={{ textAlign: 'center', fontSize: '0.68rem', color: 'var(--text-muted)', opacity: 0.5, marginTop: 'var(--space-lg)', fontFamily: 'monospace' }}>
+        build {__APP_BUILD__.sha} · {new Date(__APP_BUILD__.time).toLocaleString()}
+      </div>
     </div>
   );
 }
