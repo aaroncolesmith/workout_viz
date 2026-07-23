@@ -60,41 +60,41 @@ export default function SimilarWorkoutsPanel({ activity, similar, comparisonIds,
           const score = s.similarity_score;
           const tier = score >= 0.9 ? 'high' : score >= 0.7 ? 'medium' : score >= 0.5 ? 'low' : 'none';
           
+          const isComparing = comparisonIds.includes(s.activity.id);
+          const diffBadge = (() => {
+            if (s.similarity_score > 0.96) return null;
+            const comps = [
+              { name: 'Pace', score: s.components.pace },
+              { name: 'Dist', score: s.components.distance },
+              { name: 'HR', score: s.components.heartrate },
+              { name: 'Time', score: s.components.duration }
+            ].filter(c => c.score > 0).sort((a, b) => a.score - b.score);
+            if (comps.length === 0) return null;
+            return comps[0];
+          })();
+
           return (
             <div
               key={s.activity.id}
-              className={`similar-item ${comparisonIds.includes(s.activity.id) ? 'active' : ''}`}
+              className={`similar-item ${isComparing ? 'active' : ''}`}
               onClick={() => navigate(`/activity/${s.activity.id}`)}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
+              <div className="similar-item-top">
                 <SportBadge type={s.activity.type} size={36} />
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
-                    <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{formatActivityName(s.activity)}</div>
-                    {/* Primary Difference Badge */}
-                    {(() => {
-                        if (s.similarity_score > 0.96) return null;
-                        const comps = [
-                          { name: 'Pace', score: s.components.pace },
-                          { name: 'Dist', score: s.components.distance },
-                          { name: 'HR', score: s.components.heartrate },
-                          { name: 'Time', score: s.components.duration }
-                        ].filter(c => c.score > 0).sort((a,b) => a.score - b.score);
-                        
-                        if (comps.length === 0) return null;
-                        const diff = comps[0];
-                        return (
-                          <span style={{ fontSize: '9px', background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)', padding: '2px 6px', borderRadius: '4px', border: '1px solid var(--border-subtle)' }}>
-                            {diff.name} Diff
-                          </span>
-                        );
-                    })()}
+                <div className="similar-item-info">
+                  <div className="similar-item-name-row">
+                    <span className="similar-item-name">{formatActivityName(s.activity)}</span>
+                    {diffBadge && (
+                      <span style={{ fontSize: '9px', background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)', padding: '2px 6px', borderRadius: '4px', border: '1px solid var(--border-subtle)', flexShrink: 0 }}>
+                        {diffBadge.name} Diff
+                      </span>
+                    )}
                   </div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  <div className="similar-item-meta">
                     <span title={formatDate(s.activity.date)}>{formatRelativeTo(s.activity.date, activity.date)}</span>
                     {' · '}{formatDistance(s.activity.distance_miles)} mi · {formatPace(s.activity.pace)} /mi
                   </div>
-                  
+
                   {/* Match Breakdown */}
                   <div className="match-breakdown">
                     <div className="breakdown-pill">
@@ -119,18 +119,19 @@ export default function SimilarWorkoutsPanel({ activity, similar, comparisonIds,
                     )}
                   </div>
                 </div>
+                <span className={`similarity-badge ${tier}`}>
+                  {Math.round(s.similarity_score * 100)}%
+                </span>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
-                {s.activity.average_heartrate && (
-                  <span style={{ fontFamily: 'Manrope', fontSize: '0.8rem', color: '#f472b6', opacity: 0.6 }}>
+
+              <div className="similar-item-actions">
+                {s.activity.average_heartrate ? (
+                  <span style={{ fontFamily: 'Manrope', fontSize: '0.8rem', color: '#f472b6', opacity: 0.7 }}>
                     {formatHR(s.activity.average_heartrate)} bpm
                   </span>
-                )}
-                <span className={`similarity-badge ${tier}`}>
-                  {Math.round(s.similarity_score * 100)}% match
-                </span>
+                ) : <span />}
                 <button
-                  className={`filter-chip ${comparisonIds.includes(s.activity.id) ? 'active' : ''}`}
+                  className={`filter-chip ${isComparing ? 'active' : ''}`}
                   onClick={(e) => {
                     e.stopPropagation();
                     if (toggleComparisonId) {
@@ -143,9 +144,9 @@ export default function SimilarWorkoutsPanel({ activity, similar, comparisonIds,
                         : [...prev, s.activity.id].slice(-5)
                     );
                   }}
-                  style={{ fontSize: '0.7rem', padding: '2px 8px' }}
+                  style={{ fontSize: '0.72rem', padding: '5px 14px' }}
                 >
-                  {comparisonIds.includes(s.activity.id) ? 'Comparing' : 'Compare'}
+                  {isComparing ? '✓ Comparing' : '+ Compare'}
                 </button>
               </div>
             </div>

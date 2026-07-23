@@ -421,8 +421,7 @@ export default function ActivityDetail() {
         <div>
           {/* This workout, at a glance */}
           <div
-            className="detail-stats-grid"
-            style={{ marginBottom: 'var(--space-xl)', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)' }}
+            style={{ marginBottom: 'var(--space-xl)', display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 'var(--space-md)' }}
           >
             <div className="glass-card stat-card">
               <span className="stat-label">Distance</span>

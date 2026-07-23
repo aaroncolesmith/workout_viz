@@ -911,32 +911,6 @@ a:hover {
   gap: var(--space-sm);
 }
 
-.similar-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--space-md);
-  border-radius: var(--radius-md);
-  background: var(--bg-glass);
-  border: 1px solid var(--border-subtle);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-.similar-item:hover {
-  background: var(--bg-glass-hover);
-  border-color: var(--border-medium);
-}
-
-.similarity-badge {
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-  font-weight: 600;
-  padding: 3px 8px;
-  border-radius: var(--radius-full);
-  background: rgba(56, 189, 248, 0.15);
-  color: var(--text-accent);
-}
-
 /* ── Progress Timeline ─────────────────────────── */
 .timeline-item:hover {
   background: var(--bg-glass-hover) !important;
@@ -1411,6 +1385,7 @@ a:hover {
   font-size: 0.75rem;
   font-weight: 700;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .similarity-badge.high { background: rgba(52, 211, 153, 0.15); color: var(--tier-high); border: 1px solid rgba(52, 211, 153, 0.2); }
@@ -1420,21 +1395,23 @@ a:hover {
 
 .similar-item {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 16px;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
   background: rgba(28, 27, 27, 0.9);
   border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: var(--radius-lg);
   cursor: pointer;
   transition: all var(--transition-fast);
   margin-bottom: var(--space-md);
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .similar-item:hover {
   background: var(--bg-glass-hover);
   border-color: var(--border-medium);
-  transform: translateX(4px);
 }
 
 .similar-item.active {
@@ -1442,11 +1419,54 @@ a:hover {
   background: rgba(56, 189, 248, 0.05);
 }
 
+.similar-item-top {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-md);
+  min-width: 0;
+}
+
+.similar-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.similar-item-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.similar-item-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.similar-item-meta {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.similar-item-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+}
+
 .match-breakdown {
   display: flex;
   gap: 12px;
+  flex-wrap: wrap;
   margin-top: 6px;
-  opacity: 0.5;
+  opacity: 0.6;
   transition: opacity 0.2s;
 }
 
