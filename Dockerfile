@@ -1,6 +1,11 @@
 # ── Stage 1: Build React frontend ─────────────────────────────────────────────
 FROM node:22-alpine AS frontend-builder
 
+# Passed in at deploy time (flyctl deploy --build-arg GIT_SHA=...) — the
+# build context has no .git dir, so vite.config.js can't shell out to git.
+ARG GIT_SHA=unknown
+ENV VITE_GIT_SHA=$GIT_SHA
+
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
 RUN npm ci --silent

@@ -3,6 +3,9 @@ import react from '@vitejs/plugin-react'
 import { execSync } from 'node:child_process'
 
 function shortSha() {
+  // Docker builds don't have .git in the build context — the SHA is passed
+  // in as a build-arg instead (see Dockerfile / deploy command).
+  if (process.env.VITE_GIT_SHA) return process.env.VITE_GIT_SHA
   try {
     return execSync('git rev-parse --short HEAD').toString().trim()
   } catch {
