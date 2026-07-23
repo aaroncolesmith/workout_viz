@@ -1,20 +1,21 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { getActivity, getActivitySplits, getActivitySummary, getActivityFastestSegments, getSimilarActivities, getPcaData, getSwimLaps, getActivities } from '../utils/api';
+import { getActivity, getActivitySplits, getActivitySummary, getActivityFastestSegments, getSimilarActivities, getSwimLaps, getActivities } from '../utils/api';
 
-import { formatTime, isStrengthType, activityColor } from '../utils/format';
+import { formatTime, formatDistance, formatPace, formatElevation, formatHR, isStrengthType, activityColor } from '../utils/format';
+import { buildMileSplits } from '../utils/splits';
 import StrengthOverview from '../components/StrengthOverview';
 import RouteMap from '../components/RouteMap';
 import WorkoutRadar from '../components/WorkoutRadar';
 import ProgressTimeline from '../components/ProgressTimeline';
 import ActivityHeader from '../components/ActivityHeader';
-import PerformanceDelta from '../components/PerformanceDelta';
 import SplitPaceChart from '../components/SplitPaceChart';
 import SplitHRChart from '../components/SplitHRChart';
 import MileSplitsView from '../components/MileSplitsView';
 import FastestSegments from '../components/FastestSegments';
 import SimilarWorkoutsPanel from '../components/SimilarWorkoutsPanel';
+import CompareSplitsChart from '../components/CompareSplitsChart';
 import InsightCard from '../components/InsightCard';
 import ComparisonCard from '../components/ComparisonCard';
 import SwimLapChart from '../components/SwimLapChart';
@@ -83,6 +84,7 @@ export default function ActivityDetail() {
   const [xAxisType, setXAxisType] = useState('distance'); // 'distance' or 'time'
   const [syncingDetails, setSyncingDetails] = useState(false);
   const [comparisonFastestMap, setComparisonFastestMap] = useState({});
+  const [runCompare, setRunCompare] = useState(false);
   const {
     comparisonIds,
     setComparisonIds,
@@ -100,16 +102,12 @@ export default function ActivityDetail() {
         getSimilarActivities(id, 20),
         getActivityFastestSegments(id),
       ]);
-      // Skip PCA for strength/non-standard types — not enough data points
-      const PCA_TYPES = new Set(['Run', 'Ride', 'Hike', 'Walk', 'VirtualRun', 'TrailRun', 'VirtualRide']);
-      const pcaData = PCA_TYPES.has(activity.type) ? await getPcaData(activity.type) : null;
       return {
         activity,
         splits: splitsResponse.splits || [],
         summary: summaryResponse.segments || [],
         similar: similarResponse.similar || [],
         fastestSegments: fastestResponse.segments || [],
-        pcaData,
       };
     },
   });
@@ -142,7 +140,6 @@ export default function ActivityDetail() {
   const splits = detailQuery.data?.splits || [];
   const similar = detailQuery.data?.similar || [];
   const fastestSegments = detailQuery.data?.fastestSegments || [];
-  const pcaData = detailQuery.data?.pcaData || null;
 
   // Reset zoom when axis type changes — stale zoom bounds don't apply across axes
   const handleSetXAxisType = (type) => {
@@ -151,6 +148,7 @@ export default function ActivityDetail() {
 
   useEffect(() => {
     setComparisonFastestMap({});
+    setRunCompare(false);
   }, [id]);
 
   // Load comparison fastest-segments when comparisonIds changes (used by the
@@ -173,33 +171,6 @@ export default function ActivityDetail() {
       .filter(s => comparisonIds.includes(s.activity.id))
       .map(s => s.activity);
   }, [comparisonIds, similar]);
-
-  const radarActivities = useMemo(() => {
-    return [activity, ...comparisonActivities];
-  }, [activity, comparisonActivities]);
-
-  const deltas = useMemo(() => {
-    if (!activity || comparisonActivities.length === 0) return null;
-    const comp = comparisonActivities[0]; // Compare against the first selected
-
-    const computeDelta = (curr, comp, invert = false) => {
-      if (curr === null || comp === null || curr === undefined || comp === undefined) return null;
-      const diff = curr - comp;
-      const pct = (diff / comp) * 100;
-      // Invert logic: for Pace, lower is better. 
-      // If curr is 8:00 (480s) and comp is 8:10 (490s), diff is -10 (improvement).
-      const improved = invert ? diff < 0 : diff > 0;
-      return { diff, pct, improved };
-    };
-
-    return {
-      pace: computeDelta(activity.pace * 60, comp.pace * 60, true),
-      hr: computeDelta(activity.average_heartrate, comp.average_heartrate, true),
-      cadence: computeDelta(activity.average_cadence, comp.average_cadence, false),
-      distance: computeDelta(activity.distance_miles, comp.distance_miles, false),
-      elevation: computeDelta(activity.total_elevation_gain, comp.total_elevation_gain, false),
-    };
-  }, [activity, comparisonActivities]);
 
   const splitChartData = useMemo(() => {
     // `total_distance_miles` is the cumulative mark at each row; grain (the
@@ -253,45 +224,9 @@ export default function ActivityDetail() {
   }, [splits]);
 
   // Sequential whole-mile aggregation (mile 1, mile 2, …) for the Splits
-  // tab — distinct from splitChartData's fine-grained bucket grain above.
-  // No backend equivalent exists; built here from the same raw splits.
-  const mileSplits = useMemo(() => {
-    if (!splits.length) return [];
-    const rows = [];
-    let mileIdx = 1;
-    let timeAcc = 0;
-    let hrWeighted = 0;
-    let hrTimeAcc = 0;
-    let prevMile = 0;
-
-    for (const s of splits) {
-      const mile = Number(s.total_distance_miles) || (prevMile + 0.05);
-      const dt = s.time_seconds || 0;
-      timeAcc += dt;
-      if (s.avg_heartrate) { hrWeighted += s.avg_heartrate * dt; hrTimeAcc += dt; }
-
-      if (mile >= mileIdx) {
-        rows.push({
-          mile: mileIdx,
-          time_seconds: timeAcc,
-          avg_hr: hrTimeAcc > 0 ? hrWeighted / hrTimeAcc : null,
-          partial: false,
-        });
-        mileIdx += 1;
-        timeAcc = 0; hrWeighted = 0; hrTimeAcc = 0;
-      }
-      prevMile = mile;
-    }
-    if (timeAcc > 0) {
-      rows.push({
-        mile: Math.round(prevMile * 100) / 100,
-        time_seconds: timeAcc,
-        avg_hr: hrTimeAcc > 0 ? hrWeighted / hrTimeAcc : null,
-        partial: true,
-      });
-    }
-    return rows;
-  }, [splits]);
+  // tab and comparison charts — distinct from splitChartData's fine-grained
+  // bucket grain above.
+  const mileSplits = useMemo(() => buildMileSplits(splits), [splits]);
 
   const handleFetchDetails = async (targetId) => {
     // If targetId is an event (e.g. from onClick), use the current activity id
@@ -479,70 +414,79 @@ export default function ActivityDetail() {
       )}
 
       {/* ══════════════════════════════════════════════════════
-          TAB: Compare — radar with overlays + delta + similar
+          TAB: Compare — this workout's stats + similar workouts +
+          on-demand pace/HR overlay across up to 5 selected sessions
           ══════════════════════════════════════════════════════ */}
       {activeTab === 'compare' && (
         <div>
-          {/* Radar with comparison overlays */}
-          <div className="activity-compare-grid">
-            <div className="glass-card" style={{ height: 400, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
-              <div style={{ padding: '20px 20px 0 20px', fontWeight: 600, fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                Activity Profile
-              </div>
-              <WorkoutRadar activities={radarActivities} height={330} />
-              {hasComparisons && (
-                <div style={{ padding: '0 20px 16px 20px', fontSize: '0.75rem', textAlign: 'center', marginTop: 'auto' }}>
-                  Comparing{' '}
-                  <span style={{ color: '#fb7185', fontWeight: 600 }}>
-                    {comparisonActivities.length} session{comparisonActivities.length > 1 ? 's' : ''}
-                  </span>
-                  <button
-                    onClick={clearComparisonIds}
-                    style={{ marginLeft: 10, background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', textDecoration: 'underline' }}
-                  >
-                    Clear All
-                  </button>
-                </div>
-              )}
-              {!hasComparisons && (
-                <div style={{ padding: '0 20px 16px 20px', fontSize: '0.72rem', color: 'var(--text-muted)', textAlign: 'center', marginTop: 'auto' }}>
-                  Select workouts below to compare
-                </div>
-              )}
+          {/* This workout, at a glance */}
+          <div
+            className="detail-stats-grid"
+            style={{ marginBottom: 'var(--space-xl)', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)' }}
+          >
+            <div className="glass-card stat-card">
+              <span className="stat-label">Distance</span>
+              <span className="stat-value">
+                {formatDistance(activity.distance_miles)}<span className="stat-unit">mi</span>
+              </span>
             </div>
-
-            {/* Delta table fills right column when comparisons are active */}
-            <div style={{ minWidth: 0 }}>
-              <PerformanceDelta comparisonActivities={comparisonActivities} deltas={deltas} />
-              {!hasComparisons && (
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-                  Performance delta will appear here once you select a comparison workout.
-                </div>
-              )}
+            <div className="glass-card stat-card">
+              <span className="stat-label">Pace</span>
+              <span className="stat-value">
+                {formatPace(activity.pace)}<span className="stat-unit">/mi</span>
+              </span>
+            </div>
+            <div className="glass-card stat-card">
+              <span className="stat-label">Elevation</span>
+              <span className="stat-value">
+                {formatElevation(activity.total_elevation_gain)}<span className="stat-unit">ft</span>
+              </span>
+            </div>
+            <div className="glass-card stat-card">
+              <span className="stat-label">Avg HR</span>
+              <span className="stat-value" style={{ color: activity.average_heartrate ? '#f472b6' : 'inherit' }}>
+                {formatHR(activity.average_heartrate)}<span className="stat-unit">bpm</span>
+              </span>
             </div>
           </div>
 
-          {/* Map with comparison routes (only when comparisons active) */}
-          {(activity.map_polyline || comparisonActivities.some(ca => ca.map_polyline)) && hasComparisons && (
-            <div className="glass-card" style={{ height: 360, padding: 0, overflow: 'hidden', minWidth: 0, marginBottom: 'var(--space-xl)' }}>
-              <RouteMap
-                encodedPolyline={activity.map_polyline}
-                activityType={activity.type}
-                height={360}
-                comparisonActivities={comparisonActivities}
-              />
-            </div>
-          )}
-
-          {/* Similar Workouts Panel */}
+          {/* Similar Workouts — pick up to 5, then compare */}
           <SimilarWorkoutsPanel
             activity={activity}
             similar={similar}
-            pcaData={pcaData}
             comparisonIds={comparisonIds}
             setComparisonIds={setComparisonIds}
             toggleComparisonId={toggleComparisonId}
           />
+
+          {similar.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, margin: 'var(--space-lg) 0 var(--space-xl)' }}>
+              <button
+                className="filter-chip active"
+                disabled={!hasComparisons}
+                onClick={() => setRunCompare(true)}
+                style={{ fontSize: '0.85rem', padding: '10px 24px', opacity: hasComparisons ? 1 : 0.4, cursor: hasComparisons ? 'pointer' : 'not-allowed' }}
+              >
+                Compare {comparisonActivities.length > 0 ? `${comparisonActivities.length} Workout${comparisonActivities.length > 1 ? 's' : ''}` : ''}
+              </button>
+              {hasComparisons && (
+                <button
+                  onClick={() => { clearComparisonIds(); setRunCompare(false); }}
+                  style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', textDecoration: 'underline', fontSize: '0.8rem' }}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Pace / HR overlays — only computed once the user opts in */}
+          {runCompare && hasComparisons && (
+            <CompareSplitsChart
+              baseActivity={activity}
+              comparisonActivities={comparisonActivities}
+            />
+          )}
         </div>
       )}
 

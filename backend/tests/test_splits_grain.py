@@ -76,6 +76,38 @@ def test_rolling_segments_gap_does_not_compress_distance():
     assert abs(segs[0]["time_seconds"] - 480.0) < 2.0
 
 
+def test_compute_splits_rescales_noisy_gps_distance_to_reported_total():
+    # A real HealthKit route: raw point-to-point Haversine distance always
+    # overshoots true distance (GPS jitter never nets out), so a 5.00-mi run
+    # at an even 9:15/mi (555 s/mi) might sum to ~5.4 raw "miles" if left
+    # unscaled. Unscaled, buckets fill up early and the tail of the workout
+    # (samples past raw-mile 5.0) gets dropped entirely — pace reads fast.
+    true_total_miles = 5.0
+    true_pace_sec_per_mi = 555.0
+    true_duration = true_total_miles * true_pace_sec_per_mi
+    noise_factor = 1.08  # raw stream overshoots true distance by 8%
+
+    n = 1000
+    bundle = StreamBundle(
+        time=[i * true_duration / n for i in range(1, n + 1)],
+        distance=[i * (true_total_miles * noise_factor) * METERS_PER_MILE / n
+                  for i in range(1, n + 1)],
+    )
+    splits = compute_splits(
+        bundle, activity_id=1, activity_name="t", date_str="2026-07-22",
+        total_distance_miles=true_total_miles,
+    )
+
+    # The full duration is captured — nothing dropped past max_bucket.
+    total_time = sum(s["time_seconds"] for s in splits)
+    assert abs(total_time - true_duration) < 1.0
+
+    # Every bucket reflects the true pace, not the noise-inflated one.
+    for s in splits:
+        bucket_pace = s["time_seconds"] / BUCKET_MILES
+        assert abs(bucket_pace - true_pace_sec_per_mi) < 1.0
+
+
 def test_rolling_segments_skips_unreachable_targets():
     segs = rolling_fastest_segments(
         _uniform_splits(0.05, 2.0, 8.0), [(1.0, "1 Mile"), (3.107, "5K")])

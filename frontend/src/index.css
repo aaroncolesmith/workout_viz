@@ -455,6 +455,8 @@ a:hover {
 .scroll-tabs {
   display: flex;
   overflow-x: auto;
+  overflow-y: hidden;
+  touch-action: pan-x;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
 }
@@ -749,15 +751,6 @@ a:hover {
   grid-template-columns: 1fr;
 }
 
-/* Compare tab: radar left, delta right; stacks on mobile */
-.activity-compare-grid {
-  display: grid;
-  grid-template-columns: 350px 1fr;
-  gap: var(--space-xl);
-  margin-bottom: var(--space-xl);
-  min-width: 0;
-}
-
 /* ── Loading / Empty States ────────────────────── */
 .loading-state,
 .empty-state {
@@ -862,8 +855,7 @@ a:hover {
     grid-template-columns: 1fr;
   }
   .activity-overview-grid--map,
-  .activity-overview-grid--no-map,
-  .activity-compare-grid {
+  .activity-overview-grid--no-map {
     grid-template-columns: 1fr;
   }
   .detail-stats-grid {

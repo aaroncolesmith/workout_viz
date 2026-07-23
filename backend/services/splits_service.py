@@ -60,6 +60,15 @@ def compute_splits(
     miles = [d / METERS_PER_MILE for d in bundle.distance]
     if total_distance_miles is None:
         total_distance_miles = miles[-1]
+    elif miles[-1] > 0:
+        # Raw point-to-point stream distance (esp. Haversine-summed GPS,
+        # which never nets out jitter) routinely drifts from the activity's
+        # authoritative reported total. Anchor every bucket boundary to that
+        # known-accurate total instead of the noisy stream's own sum —
+        # otherwise buckets fill up "early" and every pace reads too fast,
+        # with the tail of the workout silently dropped past max_bucket.
+        scale = total_distance_miles / miles[-1]
+        miles = [m * scale for m in miles]
 
     max_bucket = max(1, int(total_distance_miles / BUCKET_MILES))
     if max_bucket == 0:

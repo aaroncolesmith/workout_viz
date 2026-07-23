@@ -1,6 +1,5 @@
 import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import WorkoutPCA from './WorkoutPCA';
 import SportBadge from './SportBadge';
 import {
   formatActivityName, formatDate, formatRelativeTo, formatDistance, formatPace, formatHR
@@ -14,7 +13,7 @@ const DATE_PRESETS = [
   { label: '3 Months', months: 3 },
 ];
 
-export default function SimilarWorkoutsPanel({ activity, similar, pcaData, comparisonIds, setComparisonIds, toggleComparisonId }) {
+export default function SimilarWorkoutsPanel({ activity, similar, comparisonIds, setComparisonIds, toggleComparisonId }) {
   const navigate = useNavigate();
   const [dateFilter, setDateFilter] = useState(null); // null = all time
 
@@ -51,23 +50,6 @@ export default function SimilarWorkoutsPanel({ activity, similar, pcaData, compa
           {filteredSimilar.length} of {similar.length} runs
         </span>
       </div>
-
-      {/* Mini PCA Plot */}
-      {pcaData && (
-        <div className="glass-card" style={{ height: 350, marginBottom: 'var(--space-lg)', position: 'relative', overflow: 'hidden' }}>
-          <div style={{ position: 'absolute', top: 15, left: 15, zIndex: 10, fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>
-            Archetype Explorer
-          </div>
-          <WorkoutPCA 
-            data={pcaData.activities} 
-            loadings={pcaData.loadings}
-            selectedId={Number(activity.id)}
-            highlightIds={filteredSimilar.map(s => s.activity.id)}
-            onSelectActivity={(cid) => navigate(`/activity/${cid}`)}
-            isMini={true}
-          />
-        </div>
-      )}
 
       <div className="similar-list">
         {filteredSimilar.length === 0 ? (
